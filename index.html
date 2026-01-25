@@ -1,36 +1,47 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Runner Game</title>
-  <style>
-    body {
-      background: #111;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
-    }
+<meta charset="UTF-8">
+<title>Runner Game</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #111;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
 
-    canvas {
-      background: linear-gradient(#87ceeb, #eee);
-      border: 3px solid #000;
-    }
-  </style>
+  canvas {
+    display: block;
+    background: linear-gradient(#87ceeb, #eee);
+  }
+</style>
 </head>
 <body>
-<canvas id="game" width="800" height="300"></canvas>
+<canvas id="game"></canvas>
 
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-let groundY = 240;
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+let groundY;
+function updateGround() {
+  groundY = canvas.height * 0.8;
+}
+updateGround();
 
 let player = {
   x: 80,
-  y: groundY,
+  y: 0,
   w: 40,
   h: 60,
   vy: 0,
@@ -39,7 +50,7 @@ let player = {
 
 let robot = {
   x: 20,
-  y: groundY,
+  y: 0,
   w: 40,
   h: 60
 };
@@ -51,29 +62,29 @@ let gameOver = false;
 
 function jump() {
   if (!player.jumping) {
-    player.vy = -15;
+    player.vy = -canvas.height * 0.04;
     player.jumping = true;
   }
 }
 
 document.addEventListener("keydown", jump);
 document.addEventListener("click", jump);
+document.addEventListener("touchstart", jump);
 
 function spawnObstacle() {
   obstacles.push({
     x: canvas.width,
-    y: groundY + 20,
-    w: 30,
-    h: 40
+    y: groundY,
+    w: canvas.width * 0.04,
+    h: canvas.height * 0.12
   });
 }
 
-setInterval(spawnObstacle, 2000);
+setInterval(spawnObstacle, 1800);
 
 function update() {
   if (gameOver) return;
 
-  // Player physics
   player.y += player.vy;
   player.vy += gravity;
 
@@ -82,24 +93,20 @@ function update() {
     player.jumping = false;
   }
 
-  // Move obstacles
   for (let obs of obstacles) {
-    obs.x -= 6;
+    obs.x -= canvas.width * 0.008;
 
-    // Collision
     if (
       player.x < obs.x + obs.w &&
       player.x + player.w > obs.x &&
-      player.y < obs.y + obs.h &&
-      player.y + player.h > obs.y
+      player.y - player.h < obs.y &&
+      player.y > obs.y - obs.h
     ) {
       gameOver = true;
     }
   }
 
-  // Remove passed obstacles
   obstacles = obstacles.filter(o => o.x + o.w > 0);
-
   score++;
 }
 
@@ -110,7 +117,7 @@ function drawPlayer() {
 
 function drawRobot() {
   ctx.fillStyle = "red";
-  ctx.fillRect(robot.x, robot.y - robot.h, robot.w, robot.h);
+  ctx.fillRect(robot.x, groundY - robot.h, robot.w, robot.h);
 }
 
 function drawObstacles() {
@@ -127,13 +134,14 @@ function drawGround() {
 
 function drawScore() {
   ctx.fillStyle = "black";
-  ctx.font = "20px Arial";
-  ctx.fillText("Score: " + score, 10, 25);
+  ctx.font = (canvas.width * 0.04) + "px Arial";
+  ctx.fillText("Score: " + score, 20, 40);
 }
 
 function loop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  updateGround();
   update();
   drawGround();
   drawRobot();
@@ -143,14 +151,21 @@ function loop() {
 
   if (gameOver) {
     ctx.fillStyle = "black";
-    ctx.font = "30px Arial";
-    ctx.fillText("GAME OVER", 300, 150);
-    ctx.font = "16px Arial";
-    ctx.fillText("Refresh page to restart", 300, 180);
+    ctx.font = (canvas.width * 0.08) + "px Arial";
+    ctx.fillText("GAME OVER", canvas.width * 0.25, canvas.height * 0.5);
+    ctx.font = (canvas.width * 0.04) + "px Arial";
+    ctx.fillText("Tap to restart", canvas.width * 0.32, canvas.height * 0.6);
   }
 
   requestAnimationFrame(loop);
 }
+
+document.addEventListener("click", () => {
+  if (gameOver) location.reload();
+});
+document.addEventListener("touchstart", () => {
+  if (gameOver) location.reload();
+});
 
 loop();
 </script>
