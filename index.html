@@ -46,10 +46,10 @@ function updateGround() {
 updateGround();
 
 let player = {
-  x: 120,
+  x: 140,
   y: 0,
   w: 60,
-  h: 90,
+  h: 110,
   vy: 0,
   jumping: false
 };
@@ -90,7 +90,6 @@ function spawnObstacle() {
     h: canvas.height * 0.12
   });
 }
-
 setInterval(spawnObstacle, 1800);
 
 function update() {
@@ -106,7 +105,6 @@ function update() {
 
   for (let obs of obstacles) {
     obs.x -= canvas.width * 0.008;
-
     if (
       player.x < obs.x + obs.w &&
       player.x + player.w > obs.x &&
@@ -126,39 +124,82 @@ function update() {
 function drawPlayer() {
   const px = player.x;
   const py = player.y;
-  const swing = Math.sin(step * 0.3) * 8;
+  const swing = Math.sin(step * 0.3) * 10;
 
-  ctx.fillStyle = "#2b2b2b";
-
-  // туловище
+  // ===== НОГИ =====
+  ctx.fillStyle = "#1e3fa3";
   ctx.beginPath();
-  ctx.ellipse(px, py - 50, 14, 28, 0, 0, Math.PI * 2);
+  ctx.ellipse(px - 8, py - 15 - swing, 7, 26, 0.2, 0, Math.PI * 2);
+  ctx.ellipse(px + 10, py - 15 + swing, 7, 26, -0.2, 0, Math.PI * 2);
   ctx.fill();
 
-  // голова
+  // ===== ТЕЛО (спорт костюм) =====
+  ctx.fillStyle = "#2563eb";
   ctx.beginPath();
-  ctx.arc(px, py - 80, 14, 0, Math.PI * 2);
+  ctx.ellipse(px + 2, py - 55, 16, 28, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // рука задняя
+  // ===== РУКИ =====
   ctx.beginPath();
-  ctx.ellipse(px - 10, py - 50 + swing, 6, 18, 0.3, 0, Math.PI * 2);
+  ctx.ellipse(px - 18, py - 55 + swing, 6, 20, 0.4, 0, Math.PI * 2);
+  ctx.ellipse(px + 18, py - 55 - swing, 6, 20, -0.4, 0, Math.PI * 2);
   ctx.fill();
 
-  // рука передняя
+  // ===== ШЕЯ =====
+  ctx.fillStyle = "#5a3a1a";
+  ctx.fillRect(px - 4, py - 80, 8, 10);
+
+  // ===== ГОЛОВА (тёмная кожа) =====
   ctx.beginPath();
-  ctx.ellipse(px + 10, py - 50 - swing, 6, 18, -0.3, 0, Math.PI * 2);
+  ctx.arc(px, py - 95, 14, 0, Math.PI * 2);
   ctx.fill();
 
-  // нога задняя
+  // ===== АФРО =====
+  ctx.fillStyle = "#111";
   ctx.beginPath();
-  ctx.ellipse(px - 6, py - 10 - swing, 7, 26, 0.1, 0, Math.PI * 2);
+  ctx.arc(px, py - 110, 18, Math.PI, 0);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(px - 10, py - 105, 10, Math.PI, 0);
+  ctx.arc(px + 10, py - 105, 10, Math.PI, 0);
   ctx.fill();
 
-  // нога передняя
+  // ===== ГЛАЗА =====
+  ctx.fillStyle = "white";
   ctx.beginPath();
-  ctx.ellipse(px + 8, py - 10 + swing, 7, 26, -0.1, 0, Math.PI * 2);
+  ctx.arc(px - 5, py - 98, 2, 0, Math.PI * 2);
+  ctx.arc(px + 5, py - 98, 2, 0, Math.PI * 2);
   ctx.fill();
+
+  // ===== НОС =====
+  ctx.fillStyle = "#4a2e15";
+  ctx.fillRect(px - 1, py - 95, 2, 5);
+
+  // ===== РОТ =====
+  ctx.strokeStyle = "#2b1206";
+  ctx.beginPath();
+  ctx.arc(px, py - 90, 5, 0, Math.PI);
+  ctx.stroke();
+
+  // ===== БОРОДА =====
+  ctx.fillStyle = "#2b1206";
+  ctx.beginPath();
+  ctx.arc(px, py - 86, 6, 0, Math.PI);
+  ctx.fill();
+
+  // ===== УШИ =====
+  ctx.fillStyle = "#5a3a1a";
+  ctx.beginPath();
+  ctx.arc(px - 14, py - 95, 3, 0, Math.PI * 2);
+  ctx.arc(px + 14, py - 95, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ===== ЗОЛОТАЯ ЦЕПЬ =====
+  ctx.strokeStyle = "gold";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(px, py - 72, 8, 0, Math.PI);
+  ctx.stroke();
 }
 
 function drawRobot() {
@@ -186,7 +227,6 @@ function drawScore() {
 
 function loop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
   updateGround();
   update();
   drawGround();
@@ -202,7 +242,6 @@ function loop() {
     ctx.font = (canvas.width * 0.04) + "px Arial";
     ctx.fillText("Tap to restart", canvas.width * 0.32, canvas.height * 0.6);
   }
-
   requestAnimationFrame(loop);
 }
 
