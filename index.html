@@ -66,6 +66,7 @@ let obstacles = [];
 let gravity = 1;
 let score = 0;
 let gameOver = false;
+let step = 0; // для анимации бега
 
 function jump() {
   if (!player.jumping) {
@@ -121,11 +122,61 @@ function update() {
 
   obstacles = obstacles.filter(o => o.x + o.w > 0);
   score++;
+  step++;
 }
 
 function drawPlayer() {
-  ctx.fillStyle = "green";
-  ctx.fillRect(player.x, player.y - player.h, player.w, player.h);
+  const px = player.x;
+  const py = player.y;
+  const legOffset = Math.sin(step * 0.3) * 4;
+
+  // 🧑🏾 голова (тёмная кожа)
+  ctx.fillStyle = "#5a3a1a";
+  ctx.fillRect(px + 10, py - 70, 20, 20);
+
+  // 🧑🏾‍🦱 афро волосы
+  ctx.fillStyle = "#111";
+  ctx.fillRect(px + 6, py - 78, 28, 10);
+  ctx.fillRect(px + 8, py - 88, 24, 10);
+
+  // 👀 глаза
+  ctx.fillStyle = "white";
+  ctx.fillRect(px + 14, py - 62, 3, 3);
+  ctx.fillRect(px + 23, py - 62, 3, 3);
+
+  // 👃 нос
+  ctx.fillStyle = "#4a2e15";
+  ctx.fillRect(px + 19, py - 56, 2, 4);
+
+  // 👄 рот
+  ctx.fillStyle = "#2b1206";
+  ctx.fillRect(px + 16, py - 50, 8, 2);
+
+  // 👕 тело (синяя спортивка)
+  ctx.fillStyle = "#1e4ed8";
+  ctx.fillRect(px + 12, py - 46, 16, 24);
+
+  // 💪 руки
+  ctx.fillStyle = "#1e4ed8";
+  ctx.fillRect(px + 6, py - 44, 6, 16);
+  ctx.fillRect(px + 28, py - 44, 6, 16);
+
+  // 🟡 золотая цепь
+  ctx.strokeStyle = "gold";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(px + 20, py - 40, 6, 0, Math.PI);
+  ctx.stroke();
+
+  // 👖 ноги (анимация бега)
+  ctx.fillStyle = "#143a9c";
+  ctx.fillRect(px + 13, py - 18 + legOffset, 6, 18);
+  ctx.fillRect(px + 21, py - 18 - legOffset, 6, 18);
+
+  // 👟 кроссовки
+  ctx.fillStyle = "white";
+  ctx.fillRect(px + 13, py + legOffset, 6, 4);
+  ctx.fillRect(px + 21, py - legOffset, 6, 4);
 }
 
 function drawRobot() {
