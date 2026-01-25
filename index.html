@@ -14,57 +14,28 @@ html, body {
   overflow: hidden;
 }
 canvas { display:block; }
-
-/* MENU */
-#menu {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(#bde7ff,#ffffff);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  z-index: 10;
-}
-
-#playBtn {
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  background: green;
-  clip-path: polygon(35% 25%, 35% 75%, 75% 50%);
-  cursor: pointer;
-  margin-top: 40px;
-}
 </style>
 </head>
 <body>
-
-<div id="menu">
-  <canvas id="menuCanvas" width="300" height="300"></canvas>
-  <div id="playBtn"></div>
-</div>
-
 <canvas id="game"></canvas>
 
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
-const menuCanvas = document.getElementById("menuCanvas");
-const mctx = menuCanvas.getContext("2d");
-const menu = document.getElementById("menu");
-const playBtn = document.getElementById("playBtn");
 
-const menuMusic = new Audio("music.mp3");
-menuMusic.loop = true;
-menuMusic.volume = 0.5;
+// sounds
+const bgMusic = new Audio("Untitled Project 2.mp3");
+bgMusic.loop = true; bgMusic.volume = 0.3;
 
-let gameStarted = false;
+const stepSound = new Audio("steps.mp3");
+stepSound.loop = true; stepSound.volume = 0.2;
+
+let musicStarted=false;
 
 // resize
 function resizeCanvas(){
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.width=window.innerWidth;
+  canvas.height=window.innerHeight;
 }
 window.addEventListener("resize",resizeCanvas);
 resizeCanvas();
@@ -75,88 +46,48 @@ function updateGround(){ groundY = canvas.height*0.8; }
 updateGround();
 
 // entities
-let player={ x:canvas.width*0.3, y:0, vy:0, jumping:false };
+let player={ x:canvas.width*0.3, y:0, vy:0, jumping:false, falling:false };
 let police={ x:canvas.width*0.15, y:0 };
-let obstacles=[];
-let coins=[];
 
+let obstacles=[];
 let gravity=1;
 let score=0;
-let coinsCollected=0;
+let level=1;
 let speed=0.008;
 let gameOver=false;
 let step=0;
 let bgOffset=0;
 
-// MENU DANCE
-let danceStep=0;
-function drawMenuGuy(){
-  mctx.clearRect(0,0,300,300);
-  const run=Math.sin(danceStep*0.2)*10;
-  mctx.fillStyle="#2563eb";
-  mctx.beginPath();
-  mctx.ellipse(150,170,20,40,0,0,Math.PI*2);
-  mctx.fill();
-
-  mctx.fillStyle="#5a3a1a";
-  mctx.beginPath();
-  mctx.arc(150,110,20,0,Math.PI*2);
-  mctx.fill();
-
-  mctx.fillStyle="gold";
-  mctx.beginPath();
-  mctx.arc(150,145,12,0,Math.PI);
-  mctx.stroke();
-
-  mctx.fillStyle="#2563eb";
-  mctx.beginPath();
-  mctx.ellipse(120,170+run,10,30,0,0,Math.PI*2);
-  mctx.ellipse(180,170-run,10,30,0,0,Math.PI*2);
-  mctx.fill();
-
-  danceStep++;
-  requestAnimationFrame(drawMenuGuy);
-}
-drawMenuGuy();
-menuMusic.play();
-
-// PLAY BUTTON
-playBtn.onclick=()=>{
-  menu.style.display="none";
-  menuMusic.pause();
-  gameStarted=true;
-};
-
-// INPUT
+// input
 function jump(){
-  if(!gameStarted) return;
-  if(!player.jumping){
+  if(!player.jumping && !player.falling){
     player.vy=-canvas.height*0.04;
     player.jumping=true;
+  }
+  if(!musicStarted){
+    bgMusic.play();
+    stepSound.play();
+    musicStarted=true;
   }
 }
 document.addEventListener("keydown",jump);
 document.addEventListener("click",jump);
 document.addEventListener("touchstart",jump);
 
-// SPAWN
+// spawn bins
 function spawnObstacle(){
-  obstacles.push({ x:canvas.width, y:groundY, w:canvas.width*0.05, h:canvas.height*0.12 });
+  obstacles.push({
+    x:canvas.width,
+    y:groundY,
+    w:canvas.width*0.05,
+    h:canvas.height*0.12
+  });
 }
 setInterval(spawnObstacle,1800);
 
-function spawnCoin(){
-  coins.push({
-    x:canvas.width,
-    y:groundY-canvas.height*0.15,
-    r:12
-  });
-}
-setInterval(spawnCoin,1200);
-
-// UPDATE
+// update
 function update(){
-  if(!gameStarted || gameOver) return;
+  if(gameOver) return;
 
   player.y+=player.vy;
   player.vy+=gravity;
@@ -170,32 +101,31 @@ function update(){
 
   for(let obs of obstacles){
     obs.x-=canvas.width*speed;
-  }
 
-  for(let coin of coins){
-    coin.x-=canvas.width*speed;
-  }
-
-  // collect coins
-  coins=coins.filter(c=>{
     if(
-      player.x<c.x+c.r &&
-      player.x+40>c.x-c.r &&
-      player.y-100<c.y+c.r &&
-      player.y>c.y-c.r
+      player.x<obs.x+obs.w &&
+      player.x+40>obs.x &&
+      player.y-100<obs.y &&
+      player.y>obs.y-obs.h
     ){
-      coinsCollected++;
-      return false;
+      gameOver=true;
+      player.falling=true;
+      bgMusic.pause();
+      stepSound.pause();
     }
-    return c.x>0;
-  });
+  }
 
   obstacles=obstacles.filter(o=>o.x+o.w>0);
-
   score++; step++; bgOffset-=canvas.width*0.001;
+
+  // levels
+  if(score%1500===0){
+    level++;
+    speed+=0.001;
+  }
 }
 
-// BACKGROUND
+// background
 function drawBackground(){
   ctx.fillStyle="#bde7ff";
   ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -204,34 +134,82 @@ function drawBackground(){
   for(let i=0;i<20;i++){
     let x=(i*220+bgOffset*0.5)%canvas.width;
     ctx.fillRect(x,groundY-220,140,220);
+    ctx.fillStyle="#eee";
+    for(let y=0;y<5;y++){
+      ctx.fillRect(x+20,groundY-200+y*40,25,25);
+      ctx.fillRect(x+80,groundY-200+y*40,25,25);
+    }
+    ctx.fillStyle="#ccc";
   }
 }
 
-// PLAYER
+// player
 function drawPlayer(){
   const px=player.x, py=player.y;
   const run=Math.sin(step*0.3)*10;
+  const tilt=player.jumping?-0.4:(player.falling?1:0);
 
   ctx.save();
   ctx.translate(px,py-60);
+  ctx.rotate(tilt);
 
+  // legs
   ctx.fillStyle="#1e3fa3";
   ctx.beginPath();
-  ctx.ellipse(-6,30-run,7,26,0,0,Math.PI*2);
-  ctx.ellipse(10,30+run,7,26,0,0,Math.PI*2);
+  ctx.ellipse(-6,30-run,7,26,0.3,0,Math.PI*2);
+  ctx.ellipse(10,30+run,7,26,-0.3,0,Math.PI*2);
   ctx.fill();
 
+  // body
   ctx.fillStyle="#2563eb";
   ctx.beginPath();
   ctx.ellipse(2,0,16,30,0,0,Math.PI*2);
   ctx.fill();
 
+  // arms
+  ctx.beginPath();
+  ctx.ellipse(-20,0+run,6,20,0.5,0,Math.PI*2);
+  ctx.ellipse(20,0-run,6,20,-0.5,0,Math.PI*2);
+  ctx.fill();
+
+  // neck
   ctx.fillStyle="#5a3a1a";
+  ctx.fillRect(-4,-35,8,10);
+
+  // head
   ctx.beginPath();
   ctx.arc(0,-50,14,0,Math.PI*2);
   ctx.fill();
 
+  // face
+  ctx.fillStyle="white";
+  ctx.beginPath();
+  ctx.arc(-5,-52,2,0,Math.PI*2);
+  ctx.arc(5,-52,2,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle="#4a2e15";
+  ctx.fillRect(-1,-50,2,5);
+
+  ctx.strokeStyle="#2b1206";
+  ctx.beginPath();
+  ctx.arc(0,-45,5,0,Math.PI);
+  ctx.stroke();
+
+  ctx.fillStyle="#2b1206";
+  ctx.beginPath();
+  ctx.arc(0,-42,6,0,Math.PI);
+  ctx.fill();
+
+  ctx.fillStyle="#5a3a1a";
+  ctx.beginPath();
+  ctx.arc(-14,-50,3,0,Math.PI*2);
+  ctx.arc(14,-50,3,0,Math.PI*2);
+  ctx.fill();
+
+  // chain
   ctx.strokeStyle="gold";
+  ctx.lineWidth=2;
   ctx.beginPath();
   ctx.arc(0,-28,8,0,Math.PI);
   ctx.stroke();
@@ -239,7 +217,7 @@ function drawPlayer(){
   ctx.restore();
 }
 
-// POLICE
+// police
 function drawPolice(){
   const px=police.x, py=police.y;
   const run=Math.sin(step*0.3+1)*10;
@@ -247,63 +225,101 @@ function drawPolice(){
   ctx.save();
   ctx.translate(px,py-60);
 
-  ctx.fillStyle="#111827";
+  // legs
+  ctx.fillStyle="#1f2937";
+  ctx.beginPath();
+  ctx.ellipse(-6,30-run,7,26,0.3,0,Math.PI*2);
+  ctx.ellipse(10,30+run,7,26,-0.3,0,Math.PI*2);
+  ctx.fill();
+
+  // body
+  ctx.fillStyle="#0f172a";
   ctx.beginPath();
   ctx.ellipse(2,0,16,30,0,0,Math.PI*2);
   ctx.fill();
 
+  // badge
+  ctx.fillStyle="gold";
+  ctx.beginPath();
+  ctx.arc(6,-5,3,0,Math.PI*2);
+  ctx.fill();
+
+  // arms
+  ctx.fillStyle="#0f172a";
+  ctx.beginPath();
+  ctx.ellipse(-20,0+run,6,20,0.5,0,Math.PI*2);
+  ctx.ellipse(20,0-run,6,20,-0.5,0,Math.PI*2);
+  ctx.fill();
+
+  // baton
+  ctx.fillStyle="#333";
+  ctx.fillRect(22,10,5,20);
+
+  // neck
+  ctx.fillStyle="#f1c27d";
+  ctx.fillRect(-4,-35,8,10);
+
+  // head
+  ctx.beginPath();
+  ctx.arc(0,-50,14,0,Math.PI*2);
+  ctx.fill();
+
+  // cap
   ctx.fillStyle="#000";
   ctx.fillRect(-14,-65,28,6);
+  ctx.fillRect(-8,-70,16,5);
 
   ctx.restore();
 }
 
-// BINS
+// bins
 function drawObstacles(){
   for(let obs of obstacles){
     ctx.fillStyle="#2f7d32";
     ctx.fillRect(obs.x,obs.y-obs.h,obs.w,obs.h);
+    ctx.fillStyle="#3fa34d";
+    ctx.fillRect(obs.x+5,obs.y-obs.h+10,obs.w-10,10);
   }
 }
 
-// COINS
-function drawCoins(){
-  for(let c of coins){
-    ctx.fillStyle="gold";
-    ctx.beginPath();
-    ctx.arc(c.x,c.y,c.r,0,Math.PI*2);
-    ctx.fill();
-  }
-}
-
-// GROUND
+// ground
 function drawGround(){
   ctx.fillStyle="#555";
   ctx.fillRect(0,groundY,canvas.width,6);
 }
 
-// SCORE
+// score
 function drawScore(){
   ctx.fillStyle="black";
   ctx.font=(canvas.width*0.04)+"px Arial";
-  ctx.fillText("Score: "+score+"  Coins: "+coinsCollected,20,40);
+  ctx.fillText("Score: "+score+"  Level: "+level,20,40);
 }
 
-// LOOP
+// loop
 function loop(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  drawBackground();
   updateGround();
   update();
-  drawBackground();
   drawGround();
   drawPolice();
   drawPlayer();
   drawObstacles();
-  drawCoins();
   drawScore();
+
+  if(gameOver){
+    ctx.fillStyle="black";
+    ctx.font=(canvas.width*0.08)+"px Arial";
+    ctx.fillText("GAME OVER",canvas.width*0.25,canvas.height*0.5);
+  }
 
   requestAnimationFrame(loop);
 }
+
+document.addEventListener("click",()=>{if(gameOver)location.reload();});
+document.addEventListener("touchstart",()=>{if(gameOver)location.reload();});
+
 loop();
 </script>
 </body>
