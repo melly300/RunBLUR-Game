@@ -5,8 +5,17 @@
 <meta name="viewport" content="width=device-width,height=device-height,initial-scale=1.0">
 <title>Runner Game</title>
 <style>
-html,body{margin:0;padding:0;overflow:hidden;background:#111}
-canvas{display:block}
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #111;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+canvas {
+  display: block;
+}
 </style>
 </head>
 <body>
@@ -16,212 +25,246 @@ canvas{display:block}
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-function resize(){
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+// 🎵 music
+const bgMusic = new Audio("Untitled Project 2.mp3");
+bgMusic.loop = true;
+bgMusic.volume = 0.3;
+let musicStarted = false;
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 }
-addEventListener("resize",resize);
-resize();
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
 
 let groundY;
-function updateGround(){ groundY = canvas.height*0.82 }
+function updateGround() {
+  groundY = canvas.height * 0.8;
+}
 updateGround();
 
-let bgOffset=0;
-
-let player={
-  x:150,
-  y:0,
-  w:60,
-  h:120,
-  vy:0,
-  jumping:false
+let player = {
+  x: canvas.width * 0.2,
+  y: 0,
+  vy: 0,
+  jumping: false
 };
 
-let obstacles=[];
-let gravity=1.2;
-let score=0;
-let gameOver=false;
-let step=0;
+let obstacles = [];
+let gravity = 1;
+let score = 0;
+let gameOver = false;
+let step = 0;
+let bgOffset = 0;
 
-function jump(){
-  if(!player.jumping){
-    player.vy = -canvas.height*0.04;
-    player.jumping=true;
+// === INPUT ===
+function jump() {
+  if (!player.jumping) {
+    player.vy = -canvas.height * 0.04;
+    player.jumping = true;
+  }
+  if (!musicStarted) {
+    bgMusic.play();
+    musicStarted = true;
   }
 }
-addEventListener("keydown",jump);
-addEventListener("click",jump);
-addEventListener("touchstart",jump);
+document.addEventListener("keydown", jump);
+document.addEventListener("click", jump);
+document.addEventListener("touchstart", jump);
 
-function spawnObstacle(){
+// === SPAWN BINS ===
+function spawnObstacle() {
   obstacles.push({
-    x:canvas.width,
-    y:groundY,
-    w:70,
-    h:80
+    x: canvas.width,
+    y: groundY,
+    w: canvas.width * 0.05,
+    h: canvas.height * 0.12
   });
 }
-setInterval(spawnObstacle,1800);
+setInterval(spawnObstacle, 1800);
 
-function update(){
-  if(gameOver)return;
+// === UPDATE ===
+function update() {
+  if (gameOver) return;
 
-  bgOffset+=3;
+  player.y += player.vy;
+  player.vy += gravity;
 
-  player.y+=player.vy;
-  player.vy+=gravity;
-
-  if(player.y>=groundY){
-    player.y=groundY;
-    player.jumping=false;
+  if (player.y >= groundY) {
+    player.y = groundY;
+    player.jumping = false;
   }
 
-  for(let o of obstacles){
-    o.x-=canvas.width*0.008;
-    if(
-      player.x<o.x+o.w &&
-      player.x+player.w>o.x &&
-      player.y-player.h<o.y &&
-      player.y>o.y-o.h
-    ){
-      gameOver=true;
+  for (let obs of obstacles) {
+    obs.x -= canvas.width * 0.008;
+
+    if (
+      player.x < obs.x + obs.w &&
+      player.x + 40 > obs.x &&
+      player.y - 100 < obs.y &&
+      player.y > obs.y - obs.h
+    ) {
+      gameOver = true;
+      bgMusic.pause();
     }
   }
 
-  obstacles=obstacles.filter(o=>o.x+o.w>0);
+  obstacles = obstacles.filter(o => o.x + o.w > 0);
   score++;
   step++;
+  bgOffset -= canvas.width * 0.001;
 }
 
-function drawCity(){
-  ctx.fillStyle="#87ceeb";
+// === CITY BACKGROUND ===
+function drawBackground() {
+  ctx.fillStyle = "#87ceeb";
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  ctx.fillStyle="#555";
+  ctx.fillStyle = "#444";
   for(let i=0;i<20;i++){
-    let x=(i*200 - bgOffset*0.5)%(canvas.width+400)-200;
-    let h=200+Math.sin(i)*100;
-    ctx.fillRect(x,groundY-h,150,h);
+    let x = (i*200 + bgOffset*0.5) % canvas.width;
+    ctx.fillRect(x, groundY-200, 120, 200);
+    ctx.fillStyle="#222";
+    for(let y=0;y<5;y++){
+      ctx.fillRect(x+20, groundY-180+y*35, 20,20);
+      ctx.fillRect(x+60, groundY-180+y*35, 20,20);
+    }
+    ctx.fillStyle="#444";
   }
 }
 
-function drawTrash(x,y,w,h){
-  ctx.fillStyle="#2f855a";
-  ctx.fillRect(x,y-h,w,h);
-  ctx.fillStyle="#22543d";
-  ctx.fillRect(x,y-h, w,10);
-  ctx.fillStyle="#111";
-  ctx.fillRect(x+10,y-h+20,w-20,10);
-}
-
-function drawPlayer(){
-  const px=player.x;
-  const py=player.y;
-
-  let runSwing = Math.sin(step*0.35)*18;
-  let armSwing = Math.sin(step*0.35+Math.PI)*14;
+// === PLAYER DRAW ===
+function drawPlayer() {
+  const px = player.x;
+  const py = player.y;
+  const run = Math.sin(step * 0.3) * 10;
+  const jumpTilt = player.jumping ? -0.4 : 0;
 
   ctx.save();
-  ctx.translate(px,py);
+  ctx.translate(px, py - 60);
+  ctx.rotate(jumpTilt);
 
-  // LEGS
-  ctx.fillStyle="#1e3fa3";
+  // legs
+  ctx.fillStyle = "#1e3fa3";
   ctx.beginPath();
-  if(player.jumping){
-    ctx.ellipse(10,-10,7,30,0.5,0,Math.PI*2);
-    ctx.ellipse(-10,-10,7,30,-0.5,0,Math.PI*2);
-  } else {
-    ctx.ellipse(10,-10-runSwing,7,30,0.5,0,Math.PI*2);
-    ctx.ellipse(-10,-10+runSwing,7,30,-0.5,0,Math.PI*2);
-  }
+  ctx.ellipse(-6, 30-run, 7, 26, 0.3, 0, Math.PI*2);
+  ctx.ellipse(10, 30+run, 7, 26, -0.3, 0, Math.PI*2);
   ctx.fill();
 
-  // BODY
-  ctx.fillStyle="#2563eb";
+  // body
+  ctx.fillStyle = "#2563eb";
   ctx.beginPath();
-  ctx.ellipse(0,-60,18,30,0,0,Math.PI*2);
+  ctx.ellipse(2, 0, 16, 30, 0, 0, Math.PI*2);
   ctx.fill();
 
-  // ARMS
+  // arms
   ctx.beginPath();
-  if(player.jumping){
-    ctx.ellipse(25,-65,6,20,0.5,0,Math.PI*2);
-    ctx.ellipse(-25,-65,6,20,-0.5,0,Math.PI*2);
-  } else {
-    ctx.ellipse(25,-65-armSwing,6,20,0.5,0,Math.PI*2);
-    ctx.ellipse(-25,-65+armSwing,6,20,-0.5,0,Math.PI*2);
-  }
+  ctx.ellipse(-20, 0+run, 6, 20, 0.5, 0, Math.PI*2);
+  ctx.ellipse(20, 0-run, 6, 20, -0.5, 0, Math.PI*2);
   ctx.fill();
 
-  // HEAD
+  // neck
   ctx.fillStyle="#5a3a1a";
+  ctx.fillRect(-4,-35,8,10);
+
+  // head
   ctx.beginPath();
-  ctx.arc(0,-105,14,0,Math.PI*2);
+  ctx.arc(0,-50,14,0,Math.PI*2);
   ctx.fill();
 
-  // AFRO
+  // afro
   ctx.fillStyle="#111";
   ctx.beginPath();
-  ctx.arc(0,-120,20,Math.PI,0);
+  ctx.arc(0,-65,18,Math.PI,0);
   ctx.fill();
 
-  // FACE
+  // eyes
   ctx.fillStyle="white";
   ctx.beginPath();
-  ctx.arc(-5,-108,2,0,Math.PI*2);
-  ctx.arc(5,-108,2,0,Math.PI*2);
+  ctx.arc(-5,-52,2,0,Math.PI*2);
+  ctx.arc(5,-52,2,0,Math.PI*2);
   ctx.fill();
 
-  // CHAIN
+  // nose
+  ctx.fillStyle="#4a2e15";
+  ctx.fillRect(-1,-50,2,5);
+
+  // mouth
+  ctx.strokeStyle="#2b1206";
+  ctx.beginPath();
+  ctx.arc(0,-45,5,0,Math.PI);
+  ctx.stroke();
+
+  // beard
+  ctx.fillStyle="#2b1206";
+  ctx.beginPath();
+  ctx.arc(0,-42,6,0,Math.PI);
+  ctx.fill();
+
+  // ears
+  ctx.fillStyle="#5a3a1a";
+  ctx.beginPath();
+  ctx.arc(-14,-50,3,0,Math.PI*2);
+  ctx.arc(14,-50,3,0,Math.PI*2);
+  ctx.fill();
+
+  // chain
   ctx.strokeStyle="gold";
   ctx.lineWidth=2;
   ctx.beginPath();
-  ctx.arc(0,-78,10,0,Math.PI);
+  ctx.arc(0,-28,8,0,Math.PI);
   ctx.stroke();
 
   ctx.restore();
 }
 
-function drawGround(){
-  ctx.fillStyle="#444";
-  ctx.fillRect(0,groundY+5,canvas.width,5);
+// === TRASH BINS ===
+function drawObstacles() {
+  for (let obs of obstacles) {
+    ctx.fillStyle="#2f2f2f";
+    ctx.fillRect(obs.x, obs.y-obs.h, obs.w, obs.h);
+    ctx.fillStyle="#555";
+    ctx.fillRect(obs.x+5, obs.y-obs.h+10, obs.w-10, 10);
+  }
 }
 
-function drawScore(){
+// === GROUND ===
+function drawGround() {
+  ctx.fillStyle="#333";
+  ctx.fillRect(0, groundY, canvas.width, 6);
+}
+
+// === SCORE ===
+function drawScore() {
   ctx.fillStyle="black";
-  ctx.font="30px Arial";
+  ctx.font=(canvas.width*0.04)+"px Arial";
   ctx.fillText("Score: "+score,20,40);
 }
 
-function loop(){
+// === LOOP ===
+function loop() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  drawBackground();
   updateGround();
   update();
-
-  drawCity();
   drawGround();
-
-  for(let o of obstacles){
-    drawTrash(o.x,o.y,o.w,o.h);
-  }
-
   drawPlayer();
+  drawObstacles();
   drawScore();
 
   if(gameOver){
     ctx.fillStyle="black";
-    ctx.font="80px Arial";
-    ctx.fillText("GAME OVER",canvas.width*0.25,canvas.height*0.5);
-    ctx.font="40px Arial";
-    ctx.fillText("Tap to restart",canvas.width*0.35,canvas.height*0.6);
+    ctx.font=(canvas.width*0.08)+"px Arial";
+    ctx.fillText("GAME OVER", canvas.width*0.25, canvas.height*0.5);
   }
 
   requestAnimationFrame(loop);
 }
 
-addEventListener("click",()=>{ if(gameOver)location.reload(); });
-addEventListener("touchstart",()=>{ if(gameOver)location.reload(); });
+document.addEventListener("click",()=>{if(gameOver)location.reload();});
+document.addEventListener("touchstart",()=>{if(gameOver)location.reload();});
 
 loop();
 </script>
