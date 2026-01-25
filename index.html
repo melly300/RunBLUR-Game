@@ -13,7 +13,6 @@
     height: 100%;
     overflow: hidden;
   }
-
   canvas {
     display: block;
     background: linear-gradient(#87ceeb, #eee);
@@ -47,16 +46,16 @@ function updateGround() {
 updateGround();
 
 let player = {
-  x: 80,
+  x: 120,
   y: 0,
-  w: 40,
-  h: 60,
+  w: 60,
+  h: 90,
   vy: 0,
   jumping: false
 };
 
 let robot = {
-  x: 20,
+  x: 40,
   y: 0,
   w: 40,
   h: 60
@@ -66,14 +65,13 @@ let obstacles = [];
 let gravity = 1;
 let score = 0;
 let gameOver = false;
-let step = 0; // для анимации бега
+let step = 0;
 
 function jump() {
   if (!player.jumping) {
     player.vy = -canvas.height * 0.04;
     player.jumping = true;
   }
-
   if (!musicStarted) {
     bgMusic.play();
     musicStarted = true;
@@ -128,55 +126,39 @@ function update() {
 function drawPlayer() {
   const px = player.x;
   const py = player.y;
-  const legOffset = Math.sin(step * 0.3) * 4;
+  const swing = Math.sin(step * 0.3) * 8;
 
-  // 🧑🏾 голова (тёмная кожа)
-  ctx.fillStyle = "#5a3a1a";
-  ctx.fillRect(px + 10, py - 70, 20, 20);
+  ctx.fillStyle = "#2b2b2b";
 
-  // 🧑🏾‍🦱 афро волосы
-  ctx.fillStyle = "#111";
-  ctx.fillRect(px + 6, py - 78, 28, 10);
-  ctx.fillRect(px + 8, py - 88, 24, 10);
-
-  // 👀 глаза
-  ctx.fillStyle = "white";
-  ctx.fillRect(px + 14, py - 62, 3, 3);
-  ctx.fillRect(px + 23, py - 62, 3, 3);
-
-  // 👃 нос
-  ctx.fillStyle = "#4a2e15";
-  ctx.fillRect(px + 19, py - 56, 2, 4);
-
-  // 👄 рот
-  ctx.fillStyle = "#2b1206";
-  ctx.fillRect(px + 16, py - 50, 8, 2);
-
-  // 👕 тело (синяя спортивка)
-  ctx.fillStyle = "#1e4ed8";
-  ctx.fillRect(px + 12, py - 46, 16, 24);
-
-  // 💪 руки
-  ctx.fillStyle = "#1e4ed8";
-  ctx.fillRect(px + 6, py - 44, 6, 16);
-  ctx.fillRect(px + 28, py - 44, 6, 16);
-
-  // 🟡 золотая цепь
-  ctx.strokeStyle = "gold";
-  ctx.lineWidth = 2;
+  // туловище
   ctx.beginPath();
-  ctx.arc(px + 20, py - 40, 6, 0, Math.PI);
-  ctx.stroke();
+  ctx.ellipse(px, py - 50, 14, 28, 0, 0, Math.PI * 2);
+  ctx.fill();
 
-  // 👖 ноги (анимация бега)
-  ctx.fillStyle = "#143a9c";
-  ctx.fillRect(px + 13, py - 18 + legOffset, 6, 18);
-  ctx.fillRect(px + 21, py - 18 - legOffset, 6, 18);
+  // голова
+  ctx.beginPath();
+  ctx.arc(px, py - 80, 14, 0, Math.PI * 2);
+  ctx.fill();
 
-  // 👟 кроссовки
-  ctx.fillStyle = "white";
-  ctx.fillRect(px + 13, py + legOffset, 6, 4);
-  ctx.fillRect(px + 21, py - legOffset, 6, 4);
+  // рука задняя
+  ctx.beginPath();
+  ctx.ellipse(px - 10, py - 50 + swing, 6, 18, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // рука передняя
+  ctx.beginPath();
+  ctx.ellipse(px + 10, py - 50 - swing, 6, 18, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // нога задняя
+  ctx.beginPath();
+  ctx.ellipse(px - 6, py - 10 - swing, 7, 26, 0.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  // нога передняя
+  ctx.beginPath();
+  ctx.ellipse(px + 8, py - 10 + swing, 7, 26, -0.1, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawRobot() {
