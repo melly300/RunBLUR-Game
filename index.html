@@ -8,14 +8,12 @@
 html, body {
   margin: 0;
   padding: 0;
-  background: #111;
+  background: #eaf4ff;
   width: 100%;
   height: 100%;
   overflow: hidden;
 }
-canvas {
-  display: block;
-}
+canvas { display:block; }
 </style>
 </head>
 <body>
@@ -25,185 +23,184 @@ canvas {
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-// 🎵 music
+// sounds
 const bgMusic = new Audio("Untitled Project 2.mp3");
-bgMusic.loop = true;
-bgMusic.volume = 0.3;
-let musicStarted = false;
+bgMusic.loop = true; bgMusic.volume = 0.3;
 
-function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+const stepSound = new Audio("steps.mp3");
+stepSound.loop = true; stepSound.volume = 0.2;
+
+let musicStarted=false;
+
+// resize
+function resizeCanvas(){
+  canvas.width=window.innerWidth;
+  canvas.height=window.innerHeight;
 }
-window.addEventListener("resize", resizeCanvas);
+window.addEventListener("resize",resizeCanvas);
 resizeCanvas();
 
+// ground
 let groundY;
-function updateGround() {
-  groundY = canvas.height * 0.8;
-}
+function updateGround(){ groundY = canvas.height*0.8; }
 updateGround();
 
-let player = {
-  x: canvas.width * 0.25,
-  y: 0,
-  vy: 0,
-  jumping: false
-};
+// entities
+let player={ x:canvas.width*0.3, y:0, vy:0, jumping:false, falling:false };
+let police={ x:canvas.width*0.15, y:0 };
 
-let police = {
-  x: canvas.width * 0.15,
-  y: 0
-};
+let obstacles=[];
+let gravity=1;
+let score=0;
+let level=1;
+let speed=0.008;
+let gameOver=false;
+let step=0;
+let bgOffset=0;
 
-let obstacles = [];
-let gravity = 1;
-let score = 0;
-let gameOver = false;
-let step = 0;
-let bgOffset = 0;
-
-// === INPUT ===
-function jump() {
-  if (!player.jumping) {
-    player.vy = -canvas.height * 0.04;
-    player.jumping = true;
+// input
+function jump(){
+  if(!player.jumping && !player.falling){
+    player.vy=-canvas.height*0.04;
+    player.jumping=true;
   }
-  if (!musicStarted) {
+  if(!musicStarted){
     bgMusic.play();
-    musicStarted = true;
+    stepSound.play();
+    musicStarted=true;
   }
 }
-document.addEventListener("keydown", jump);
-document.addEventListener("click", jump);
-document.addEventListener("touchstart", jump);
+document.addEventListener("keydown",jump);
+document.addEventListener("click",jump);
+document.addEventListener("touchstart",jump);
 
-// === SPAWN BINS ===
-function spawnObstacle() {
+// spawn bins
+function spawnObstacle(){
   obstacles.push({
-    x: canvas.width,
-    y: groundY,
-    w: canvas.width * 0.05,
-    h: canvas.height * 0.12
+    x:canvas.width,
+    y:groundY,
+    w:canvas.width*0.05,
+    h:canvas.height*0.12
   });
 }
-setInterval(spawnObstacle, 1800);
+setInterval(spawnObstacle,1800);
 
-// === UPDATE ===
-function update() {
-  if (gameOver) return;
+// update
+function update(){
+  if(gameOver) return;
 
-  player.y += player.vy;
-  player.vy += gravity;
+  player.y+=player.vy;
+  player.vy+=gravity;
 
-  if (player.y >= groundY) {
-    player.y = groundY;
-    player.jumping = false;
+  if(player.y>=groundY){
+    player.y=groundY;
+    player.jumping=false;
   }
 
-  police.y = player.y;
+  police.y=player.y;
 
-  for (let obs of obstacles) {
-    obs.x -= canvas.width * 0.008;
+  for(let obs of obstacles){
+    obs.x-=canvas.width*speed;
 
-    if (
-      player.x < obs.x + obs.w &&
-      player.x + 40 > obs.x &&
-      player.y - 100 < obs.y &&
-      player.y > obs.y - obs.h
-    ) {
-      gameOver = true;
+    if(
+      player.x<obs.x+obs.w &&
+      player.x+40>obs.x &&
+      player.y-100<obs.y &&
+      player.y>obs.y-obs.h
+    ){
+      gameOver=true;
+      player.falling=true;
       bgMusic.pause();
+      stepSound.pause();
     }
   }
 
-  obstacles = obstacles.filter(o => o.x + o.w > 0);
-  score++;
-  step++;
-  bgOffset -= canvas.width * 0.001;
+  obstacles=obstacles.filter(o=>o.x+o.w>0);
+  score++; step++; bgOffset-=canvas.width*0.001;
+
+  // levels
+  if(score%1500===0){
+    level++;
+    speed+=0.001;
+  }
 }
 
-// === CITY BACKGROUND ===
-function drawBackground() {
-  ctx.fillStyle = "#87ceeb";
+// background
+function drawBackground(){
+  ctx.fillStyle="#bde7ff";
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  ctx.fillStyle = "#444";
+  ctx.fillStyle="#ccc";
   for(let i=0;i<20;i++){
-    let x = (i*220 + bgOffset*0.5) % canvas.width;
-    ctx.fillRect(x, groundY-220, 140, 220);
-    ctx.fillStyle="#222";
+    let x=(i*220+bgOffset*0.5)%canvas.width;
+    ctx.fillRect(x,groundY-220,140,220);
+    ctx.fillStyle="#eee";
     for(let y=0;y<5;y++){
-      ctx.fillRect(x+20, groundY-200+y*40, 25,25);
-      ctx.fillRect(x+80, groundY-200+y*40, 25,25);
+      ctx.fillRect(x+20,groundY-200+y*40,25,25);
+      ctx.fillRect(x+80,groundY-200+y*40,25,25);
     }
-    ctx.fillStyle="#444";
+    ctx.fillStyle="#ccc";
   }
 }
 
-// === PLAYER DRAW (BALD) ===
-function drawPlayer() {
-  const px = player.x;
-  const py = player.y;
-  const run = Math.sin(step * 0.3) * 10;
-  const jumpTilt = player.jumping ? -0.4 : 0;
+// player
+function drawPlayer(){
+  const px=player.x, py=player.y;
+  const run=Math.sin(step*0.3)*10;
+  const tilt=player.jumping?-0.4:(player.falling?1:0);
 
   ctx.save();
-  ctx.translate(px, py - 60);
-  ctx.rotate(jumpTilt);
+  ctx.translate(px,py-60);
+  ctx.rotate(tilt);
 
   // legs
-  ctx.fillStyle = "#1e3fa3";
+  ctx.fillStyle="#1e3fa3";
   ctx.beginPath();
-  ctx.ellipse(-6, 30-run, 7, 26, 0.3, 0, Math.PI*2);
-  ctx.ellipse(10, 30+run, 7, 26, -0.3, 0, Math.PI*2);
+  ctx.ellipse(-6,30-run,7,26,0.3,0,Math.PI*2);
+  ctx.ellipse(10,30+run,7,26,-0.3,0,Math.PI*2);
   ctx.fill();
 
   // body
-  ctx.fillStyle = "#2563eb";
+  ctx.fillStyle="#2563eb";
   ctx.beginPath();
-  ctx.ellipse(2, 0, 16, 30, 0, 0, Math.PI*2);
+  ctx.ellipse(2,0,16,30,0,0,Math.PI*2);
   ctx.fill();
 
   // arms
   ctx.beginPath();
-  ctx.ellipse(-20, 0+run, 6, 20, 0.5, 0, Math.PI*2);
-  ctx.ellipse(20, 0-run, 6, 20, -0.5, 0, Math.PI*2);
+  ctx.ellipse(-20,0+run,6,20,0.5,0,Math.PI*2);
+  ctx.ellipse(20,0-run,6,20,-0.5,0,Math.PI*2);
   ctx.fill();
 
   // neck
   ctx.fillStyle="#5a3a1a";
   ctx.fillRect(-4,-35,8,10);
 
-  // head (bald)
+  // head
   ctx.beginPath();
   ctx.arc(0,-50,14,0,Math.PI*2);
   ctx.fill();
 
-  // eyes
+  // face
   ctx.fillStyle="white";
   ctx.beginPath();
   ctx.arc(-5,-52,2,0,Math.PI*2);
   ctx.arc(5,-52,2,0,Math.PI*2);
   ctx.fill();
 
-  // nose
   ctx.fillStyle="#4a2e15";
   ctx.fillRect(-1,-50,2,5);
 
-  // mouth
   ctx.strokeStyle="#2b1206";
   ctx.beginPath();
   ctx.arc(0,-45,5,0,Math.PI);
   ctx.stroke();
 
-  // beard
   ctx.fillStyle="#2b1206";
   ctx.beginPath();
   ctx.arc(0,-42,6,0,Math.PI);
   ctx.fill();
 
-  // ears
   ctx.fillStyle="#5a3a1a";
   ctx.beginPath();
   ctx.arc(-14,-50,3,0,Math.PI*2);
@@ -220,33 +217,43 @@ function drawPlayer() {
   ctx.restore();
 }
 
-// === POLICE DRAW ===
-function drawPolice() {
-  const px = police.x;
-  const py = police.y;
-  const run = Math.sin(step * 0.3 + 1) * 10;
+// police
+function drawPolice(){
+  const px=police.x, py=police.y;
+  const run=Math.sin(step*0.3+1)*10;
 
   ctx.save();
-  ctx.translate(px, py - 60);
+  ctx.translate(px,py-60);
 
   // legs
-  ctx.fillStyle = "#1f2937";
+  ctx.fillStyle="#1f2937";
   ctx.beginPath();
-  ctx.ellipse(-6, 30-run, 7, 26, 0.3, 0, Math.PI*2);
-  ctx.ellipse(10, 30+run, 7, 26, -0.3, 0, Math.PI*2);
+  ctx.ellipse(-6,30-run,7,26,0.3,0,Math.PI*2);
+  ctx.ellipse(10,30+run,7,26,-0.3,0,Math.PI*2);
   ctx.fill();
 
   // body
-  ctx.fillStyle = "#111827";
+  ctx.fillStyle="#0f172a";
   ctx.beginPath();
-  ctx.ellipse(2, 0, 16, 30, 0, 0, Math.PI*2);
+  ctx.ellipse(2,0,16,30,0,0,Math.PI*2);
+  ctx.fill();
+
+  // badge
+  ctx.fillStyle="gold";
+  ctx.beginPath();
+  ctx.arc(6,-5,3,0,Math.PI*2);
   ctx.fill();
 
   // arms
+  ctx.fillStyle="#0f172a";
   ctx.beginPath();
-  ctx.ellipse(-20, 0+run, 6, 20, 0.5, 0, Math.PI*2);
-  ctx.ellipse(20, 0-run, 6, 20, -0.5, 0, Math.PI*2);
+  ctx.ellipse(-20,0+run,6,20,0.5,0,Math.PI*2);
+  ctx.ellipse(20,0-run,6,20,-0.5,0,Math.PI*2);
   ctx.fill();
+
+  // baton
+  ctx.fillStyle="#333";
+  ctx.fillRect(22,10,5,20);
 
   // neck
   ctx.fillStyle="#f1c27d";
@@ -257,38 +264,39 @@ function drawPolice() {
   ctx.arc(0,-50,14,0,Math.PI*2);
   ctx.fill();
 
-  // police cap
+  // cap
   ctx.fillStyle="#000";
   ctx.fillRect(-14,-65,28,6);
+  ctx.fillRect(-8,-70,16,5);
 
   ctx.restore();
 }
 
-// === TRASH BINS ===
-function drawObstacles() {
-  for (let obs of obstacles) {
-    ctx.fillStyle="#2f2f2f";
-    ctx.fillRect(obs.x, obs.y-obs.h, obs.w, obs.h);
-    ctx.fillStyle="#555";
-    ctx.fillRect(obs.x+5, obs.y-obs.h+10, obs.w-10, 10);
+// bins
+function drawObstacles(){
+  for(let obs of obstacles){
+    ctx.fillStyle="#2f7d32";
+    ctx.fillRect(obs.x,obs.y-obs.h,obs.w,obs.h);
+    ctx.fillStyle="#3fa34d";
+    ctx.fillRect(obs.x+5,obs.y-obs.h+10,obs.w-10,10);
   }
 }
 
-// === GROUND ===
-function drawGround() {
-  ctx.fillStyle="#333";
-  ctx.fillRect(0, groundY, canvas.width, 6);
+// ground
+function drawGround(){
+  ctx.fillStyle="#555";
+  ctx.fillRect(0,groundY,canvas.width,6);
 }
 
-// === SCORE ===
-function drawScore() {
+// score
+function drawScore(){
   ctx.fillStyle="black";
   ctx.font=(canvas.width*0.04)+"px Arial";
-  ctx.fillText("Score: "+score,20,40);
+  ctx.fillText("Score: "+score+"  Level: "+level,20,40);
 }
 
-// === LOOP ===
-function loop() {
+// loop
+function loop(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
   drawBackground();
@@ -303,7 +311,7 @@ function loop() {
   if(gameOver){
     ctx.fillStyle="black";
     ctx.font=(canvas.width*0.08)+"px Arial";
-    ctx.fillText("GAME OVER", canvas.width*0.25, canvas.height*0.5);
+    ctx.fillText("GAME OVER",canvas.width*0.25,canvas.height*0.5);
   }
 
   requestAnimationFrame(loop);
