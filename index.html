@@ -16,6 +16,1097 @@
     }
     canvas {
       display: block;
+      width: 100vw;
+      height: 100vh;
+      touch-action: manipulation;
+      background: #0b1220;
+    }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<script>
+(() => {
+  "use strict";
+
+  // NOTE:
+  // Фотореалистичный "4k hyperrealism" как фото в чистом canvas без текстур/моделей недостижим.
+  // Но ниже — максимально аккуратные детализированные 2D-персонажи + реалистичная физика/анимации,
+  // меню/пауза/магазин/сохранение монет.
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+
+  // ================== Resize / DPR ==================
+  let W = 0, H = 0, DPR = 1, groundY = 0;
+  function resize() {
+    const cssW = window.innerWidth || document.documentElement.clientWidth || 400;
+    const cssH = window.innerHeight || document.documentElement.clientHeight || 600;
+    DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    canvas.style.width = cssW + "px";
+    canvas.style.height = cssH + "px";
+    canvas.width = Math.floor(cssW * DPR);
+    canvas.height = Math.floor(cssH * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    W = cssW;
+    H = cssH;
+    groundY = H * 0.82;
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // ================== State ==================
+  const State = Object.freeze({ MENU: "menu", GAME: "game", PAUSE: "pause", SHOP: "shop", GAME_OVER: "gameover" });
+  let state = State.MENU;
+
+  // ================== Persistence ==================
+  const STORAGE = {
+    coins: "runner_coins_v1",
+    owned: "runner_owned_v1",
+    equipped: "runner_equipped_v1"
+  };
+
+  function loadJSON(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      return JSON.parse(raw);
+    } catch {
+      return fallback;
+    }
+  }
+  function saveJSON(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  }
+  function loadInt(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      const n = raw == null ? fallback : parseInt(raw, 10);
+      return Number.isFinite(n) && n >= 0 ? n : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  function saveInt(key, value) {
+    try { localStorage.setItem(key, String(value)); } catch {}
+  }
+
+  // ================== Constants ==================
+  // physics tuned for: medium jump height + fast landing
+  const PHYS = {
+    gravity: 5200,              // px/s^2 (сильнее => быстрее приземление)
+    jumpHeightFactor: 0.22,     // доля высоты экрана
+    coyoteTime: 0.07,           // сек (немного прощаем прыжок)
+    jumpBuffer: 0.10            // сек
+  };
+
+  const GAME = {
+    baseSpeedPx: 440,           // px/s at level 1
+    levelStepScore: 450,
+    speedLerp: 5.5,             // насколько быстро скорость догоняет target
+    obstacleMin: 1.05,
+    obstacleMax: 1.8,
+    coinHeightFactor: 0.18
+  };
+
+  const UI = {
+    hudH: 56,
+    pauseBtnSize: 40,
+    pad: 16
+  };
+
+  // ================== Inventory / Shop ==================
+  const HATS = Object.freeze({
+    none: "none",
+    red_snap: "red_snap",
+    blue_snap: "blue_snap",
+    black_beanie: "black_beanie",
+    white_bucket: "white_bucket"
+  });
+
+  const shopItems = [
+    { id: HATS.red_snap, name: "Red Snapback", price: 25 },
+    { id: HATS.blue_snap, name: "Blue Snapback", price: 40 },
+    { id: HATS.black_beanie, name: "Black Beanie", price: 60 },
+    { id: HATS.white_bucket, name: "White Bucket", price: 80 }
+  ];
+
+  let coinsBalance = loadInt(STORAGE.coins, 0);
+  let owned = loadJSON(STORAGE.owned, {});
+  let equipped = loadJSON(STORAGE.equipped, { hat: HATS.none });
+  if (!equipped || typeof equipped.hat !== "string") equipped = { hat: HATS.none };
+
+  function setCoins(n) { coinsBalance = Math.max(0, n | 0); saveInt(STORAGE.coins, coinsBalance); }
+  function addCoins(n) { setCoins(coinsBalance + (n | 0)); }
+  function setOwned(id, v) { owned[id] = !!v; saveJSON(STORAGE.owned, owned); }
+  function setEquippedHat(id) { equipped.hat = id; saveJSON(STORAGE.equipped, equipped); }
+
+  // ================== World / Entities ==================
+  let score = 0;
+  let level = 1;
+  let speed = GAME.baseSpeedPx;
+  let speedTarget = speed;
+  let gameOver = false;
+
+  const player = {
+    x: () => W * 0.3,
+    y: groundY,
+    vy: 0,
+    onGround: true,
+    coyote: 0,
+    jumpBuf: 0,
+    pose: 0,       // 0..1 run cycle
+    fall: 0        // 0..1
+  };
+
+  const police = {
+    x: () => W * 0.18,
+    y: groundY,
+    pose: 0
+  };
+
+  const obstacles = [];
+  const coins = [];
+  let spawnT = 0;
+  let spawnNext = 1.2;
+  let bgFar = 0;
+  let bgCity = 0;
+  let time = 0;
+
+  function resetRun() {
+    score = 0;
+    level = 1;
+    speed = GAME.baseSpeedPx;
+    speedTarget = speed;
+    gameOver = false;
+    obstacles.length = 0;
+    coins.length = 0;
+    spawnT = 0;
+    spawnNext = 1.2;
+    bgFar = 0;
+    bgCity = 0;
+    player.y = groundY;
+    player.vy = 0;
+    player.onGround = true;
+    player.coyote = 0;
+    player.jumpBuf = 0;
+    player.pose = 0;
+    player.fall = 0;
+    police.y = groundY;
+    police.pose = 0;
+  }
+
+  // ================== Input ==================
+  function pointFromEvent(evt) {
+    const r = canvas.getBoundingClientRect();
+    const p = evt.touches && evt.touches[0] ? evt.touches[0] : evt;
+    return { x: p.clientX - r.left, y: p.clientY - r.top };
+  }
+
+  function inRect(x, y, rx, ry, rw, rh) {
+    return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+  }
+
+  function pauseBtnRect() {
+    return { x: W - UI.pad - UI.pauseBtnSize, y: UI.pad, w: UI.pauseBtnSize, h: UI.pauseBtnSize };
+  }
+
+  function requestJump() {
+    if (state !== State.GAME) return;
+    player.jumpBuf = PHYS.jumpBuffer;
+  }
+
+  function togglePause() {
+    if (state === State.GAME) state = State.PAUSE;
+    else if (state === State.PAUSE) state = State.GAME;
+  }
+
+  function onPointerDown(evt) {
+    const { x, y } = pointFromEvent(evt);
+    if (state === State.MENU) return handleMenuClick(x, y);
+    if (state === State.SHOP) return handleShopClick(x, y);
+    if (state === State.PAUSE) return handlePauseClick(x, y);
+    if (state === State.GAME_OVER) { resetRun(); state = State.MENU; return; }
+    // game
+    const p = pauseBtnRect();
+    if (inRect(x, y, p.x, p.y, p.w, p.h)) togglePause();
+    else requestJump();
+  }
+
+  canvas.addEventListener("mousedown", onPointerDown);
+  canvas.addEventListener("touchstart", (e) => { e.preventDefault(); onPointerDown(e); }, { passive: false });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Space" || e.code === "ArrowUp") requestJump();
+    if (e.code === "Escape") {
+      if (state === State.GAME || state === State.PAUSE) togglePause();
+    }
+    if (e.code === "Enter" && state === State.GAME_OVER) { resetRun(); state = State.MENU; }
+  });
+
+  // ================== Spawning ==================
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  function scheduleSpawn() { spawnNext = rand(GAME.obstacleMin, GAME.obstacleMax); }
+
+  function spawnObstacle() {
+    const w = W * 0.06;
+    const type = Math.random();
+    const h = type < 0.5 ? H * 0.10 : H * 0.16;
+    obstacles.push({ x: W + w, y: groundY, w, h });
+
+    // coins between obstacles
+    const cy = groundY - H * GAME.coinHeightFactor;
+    const baseX = W + w + 90;
+    const count = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i++) {
+      coins.push({ x: baseX + i * 42, y: cy - i * 4, r: 10 });
+    }
+  }
+
+  // ================== Themes ==================
+  function themeForLevel(lvl) {
+    // 1-3 day, 4-6 night, repeat
+    const band = Math.floor((lvl - 1) / 3) % 2;
+    return band === 0 ? "day" : "night";
+  }
+
+  // ================== Update ==================
+  function update(dt) {
+    if (state !== State.GAME) return;
+
+    // level & speed: 1.0, 1.1, 1.2...
+    level = 1 + Math.floor(score / GAME.levelStepScore);
+    const scale = 1 + 0.1 * (level - 1);
+    speedTarget = GAME.baseSpeedPx * scale;
+    speed += (speedTarget - speed) * Math.min(1, GAME.speedLerp * dt);
+
+    // background parallax
+    bgFar -= speed * 0.12 * dt;
+    bgCity -= speed * 0.55 * dt;
+
+    // jump buffering + coyote time
+    player.coyote = player.onGround ? PHYS.coyoteTime : Math.max(0, player.coyote - dt);
+    player.jumpBuf = Math.max(0, player.jumpBuf - dt);
+
+    const wantJump = player.jumpBuf > 0;
+    const canJump = player.coyote > 0 && !gameOver;
+    if (wantJump && canJump) {
+      // v from desired height: v = sqrt(2*g*h)
+      const h = H * PHYS.jumpHeightFactor;
+      const v = Math.sqrt(2 * PHYS.gravity * h);
+      player.vy = -v;
+      player.onGround = false;
+      player.coyote = 0;
+      player.jumpBuf = 0;
+    }
+
+    // integrate physics
+    player.vy += PHYS.gravity * dt;
+    player.y += player.vy * dt;
+    if (player.y >= groundY) {
+      player.y = groundY;
+      player.vy = 0;
+      player.onGround = true;
+    } else {
+      player.onGround = false;
+    }
+
+    // poses
+    const runRate = (speed / GAME.baseSpeedPx) * 1.05;
+    player.pose = (player.pose + dt * 2.8 * runRate) % 1;
+    police.pose = (police.pose + dt * 2.6 * runRate) % 1;
+    player.fall = Math.max(0, Math.min(1, (player.vy + 300) / 1300));
+
+    // police follows
+    police.y += (player.y - police.y) * (10 * dt);
+
+    // move obstacles and collide
+    const px = player.x();
+    const pTop = player.y - 92;
+    const pBot = player.y;
+    const pL = px - 18;
+    const pR = px + 18;
+
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const o = obstacles[i];
+      o.x -= speed * dt;
+      if (o.x + o.w < -80) {
+        obstacles.splice(i, 1);
+        continue;
+      }
+      const oL = o.x;
+      const oR = o.x + o.w;
+      const oT = o.y - o.h;
+      if (!gameOver && pR > oL && pL < oR && pBot > oT && pTop < o.y) {
+        gameOver = true;
+        state = State.GAME_OVER;
+      }
+    }
+
+    // coins move/collect
+    for (let i = coins.length - 1; i >= 0; i--) {
+      const c = coins[i];
+      c.x -= speed * dt;
+      if (c.x + c.r < -80) { coins.splice(i, 1); continue; }
+      const cL = c.x - c.r, cR = c.x + c.r, cT = c.y - c.r, cB = c.y + c.r;
+      if (pR > cL && pL < cR && pBot > cT && pTop < cB) {
+        coins.splice(i, 1);
+        addCoins(1);
+        score += 30;
+      }
+    }
+
+    // spawn
+    spawnT += dt;
+    if (spawnT >= spawnNext) {
+      spawnT = 0;
+      scheduleSpawn();
+      spawnObstacle();
+    }
+
+    // score
+    score += Math.floor(speed * dt * 0.08);
+  }
+
+  // ================== Drawing helpers ==================
+  function roundRect(x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  function shadow(fn, blur, ox, oy, color) {
+    ctx.save();
+    ctx.shadowBlur = blur;
+    ctx.shadowOffsetX = ox;
+    ctx.shadowOffsetY = oy;
+    ctx.shadowColor = color;
+    fn();
+    ctx.restore();
+  }
+
+  // ================== Background ==================
+  function drawBackground() {
+    const theme = themeForLevel(level);
+
+    // sky gradient
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    if (theme === "day") {
+      sky.addColorStop(0, "#7dd3fc");
+      sky.addColorStop(1, "#e0f2fe");
+    } else {
+      sky.addColorStop(0, "#020617");
+      sky.addColorStop(0.55, "#0b1220");
+      sky.addColorStop(1, "#111827");
+    }
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, H);
+
+    // far haze
+    const farX = ((bgFar % W) + W) % W;
+    ctx.fillStyle = theme === "day" ? "rgba(59,130,246,0.15)" : "rgba(148,163,184,0.08)";
+    for (let i = -1; i < 4; i++) {
+      const x = i * W + farX * 0.55;
+      ctx.beginPath();
+      ctx.moveTo(x, H * 0.68);
+      ctx.quadraticCurveTo(x + W * 0.28, H * 0.54, x + W * 0.56, H * 0.68);
+      ctx.quadraticCurveTo(x + W * 0.84, H * 0.84, x + W * 1.12, H * 0.70);
+      ctx.lineTo(x + W * 1.12, H);
+      ctx.lineTo(x, H);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // city
+    const cityX = ((bgCity % (W * 2)) + (W * 2)) % (W * 2);
+    const bW = 90;
+    for (let i = -6; i < 16; i++) {
+      const x = i * bW + cityX - W;
+      const h = H * (0.18 + ((i % 5 + 5) % 5) * 0.04);
+      ctx.fillStyle = theme === "day" ? "#d1d5db" : "#0b1220";
+      ctx.fillRect(x, groundY - h - 44, bW - 18, h);
+      // windows
+      ctx.fillStyle = theme === "day" ? "rgba(99,102,241,0.25)" : "rgba(250,204,21,0.9)";
+      for (let wy = groundY - h - 20; wy < groundY - 70; wy += 24) {
+        ctx.fillRect(x + 10, wy, 10, 16);
+        ctx.fillRect(x + 34, wy, 10, 16);
+        ctx.fillRect(x + 58, wy, 10, 16);
+      }
+    }
+
+    // ground / road
+    ctx.fillStyle = theme === "day" ? "#4b5563" : "#020617";
+    ctx.fillRect(0, groundY, W, H - groundY);
+    ctx.fillStyle = theme === "day" ? "#6b7280" : "#111827";
+    ctx.fillRect(0, groundY, W, 6);
+
+    // lane
+    ctx.strokeStyle = theme === "day" ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([20, 20]);
+    ctx.beginPath();
+    ctx.moveTo(0, groundY + 44);
+    ctx.lineTo(W, groundY + 44);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // ================== Characters (more coherent, no gaps) ==================
+  function drawRapper(x, y, pose01, jumping, fall01, hatId) {
+    // pose
+    const phase = pose01 * Math.PI * 2;
+    const legA = Math.sin(phase) * 0.55;
+    const legB = Math.sin(phase + Math.PI) * 0.55;
+    const armA = Math.sin(phase + Math.PI) * 0.65;
+    const armB = Math.sin(phase) * 0.65;
+    const tilt = jumping ? -0.25 : (fall01 > 0.35 ? 0.35 : 0);
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(tilt);
+
+    // proportions
+    const skin = "#8d5524";
+    const suit = "#2563eb";
+    const suitDark = "#1e40af";
+    const shoe = "#0b1220";
+
+    // body anchor: hips at (0,0), ground at y=0
+    const hipY = -8;
+    const torsoY = hipY - 48;
+    const headY = torsoY - 30;
+
+    // shadow
+    ctx.fillStyle = "rgba(0,0,0,0.18)";
+    ctx.beginPath();
+    ctx.ellipse(0, 8, 22, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // legs (thigh + calf connected, no gaps)
+    function leg(side, ang) {
+      const s = side;
+      const hipX = 7 * s;
+      const thighL = 30;
+      const calfL = 28;
+      const kneeBend = Math.max(-0.2, Math.min(0.9, -ang * 0.8));
+
+      ctx.save();
+      ctx.translate(hipX, hipY);
+      ctx.rotate(ang);
+
+      // thigh
+      ctx.fillStyle = suitDark;
+      roundRect(-6, 0, 12, thighL, 7);
+      ctx.fill();
+
+      // knee joint
+      ctx.translate(0, thighL - 2);
+      ctx.rotate(kneeBend);
+      // calf
+      roundRect(-6, 0, 12, calfL, 7);
+      ctx.fill();
+
+      // shoe
+      ctx.translate(0, calfL - 2);
+      ctx.fillStyle = shoe;
+      roundRect(-10, 0, 20, 8, 4);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    leg(-1, legA);
+    leg(1, legB);
+
+    // torso (jacket)
+    shadow(() => {
+      ctx.fillStyle = suit;
+      roundRect(-18, torsoY, 36, 54, 14);
+      ctx.fill();
+    }, 10, 0, 6, "rgba(0,0,0,0.12)");
+
+    // neck
+    ctx.fillStyle = skin;
+    roundRect(-5, headY + 18, 10, 12, 5);
+    ctx.fill();
+
+    // arms (upper+lower connected)
+    function arm(side, ang) {
+      const s = side;
+      const shoulderX = 20 * s;
+      const shoulderY = torsoY + 14;
+      const upper = 20;
+      const lower = 18;
+      const elbow = Math.max(-0.6, Math.min(0.9, -ang * 0.35));
+
+      ctx.save();
+      ctx.translate(shoulderX, shoulderY);
+      ctx.rotate(ang);
+
+      ctx.fillStyle = suit;
+      roundRect(-5, 0, 10, upper, 6);
+      ctx.fill();
+
+      ctx.translate(0, upper - 2);
+      ctx.rotate(elbow);
+      roundRect(-5, 0, 10, lower, 6);
+      ctx.fill();
+
+      // hand
+      ctx.translate(0, lower - 2);
+      ctx.fillStyle = skin;
+      roundRect(-5, 0, 10, 10, 5);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    arm(-1, armA);
+    arm(1, armB);
+
+    // head (with subtle shading)
+    const faceGrad = ctx.createRadialGradient(-5, headY - 6, 6, 0, headY - 2, 18);
+    faceGrad.addColorStop(0, "#a66b3a");
+    faceGrad.addColorStop(1, skin);
+    ctx.fillStyle = faceGrad;
+    ctx.beginPath();
+    ctx.arc(0, headY, 15, 0, Math.PI * 2);
+    ctx.fill();
+
+    // facial features
+    ctx.fillStyle = "#0b1220";
+    ctx.beginPath();
+    ctx.arc(-5, headY - 3, 1.6, 0, Math.PI * 2);
+    ctx.arc(5, headY - 3, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(-2, headY, 4, 2); // nose
+    ctx.strokeStyle = "#0b1220";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(0, headY + 6, 6, 0, Math.PI);
+    ctx.stroke();
+    // beard
+    ctx.fillStyle = "rgba(11,18,32,0.55)";
+    ctx.beginPath();
+    ctx.arc(0, headY + 7, 9, 0, Math.PI);
+    ctx.fill();
+
+    // chain
+    ctx.strokeStyle = "#facc15";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, torsoY + 20, 14, Math.PI * 0.18, Math.PI * 0.82);
+    ctx.stroke();
+
+    // hat
+    drawHat(hatId, headY);
+
+    ctx.restore();
+  }
+
+  function drawPolice(x, y, pose01) {
+    const phase = pose01 * Math.PI * 2;
+    const legA = Math.sin(phase + 0.8) * 0.50;
+    const legB = Math.sin(phase + Math.PI + 0.8) * 0.50;
+    const armA = Math.sin(phase + Math.PI + 0.8) * 0.55;
+    const armB = Math.sin(phase + 0.8) * 0.55;
+
+    ctx.save();
+    ctx.translate(x, y);
+
+    const skin = "#f1c27d";
+    const uni = "#0f172a";
+    const uni2 = "#111827";
+    const shoe = "#0b1220";
+
+    const hipY = -8;
+    const torsoY = hipY - 48;
+    const headY = torsoY - 30;
+
+    // shadow
+    ctx.fillStyle = "rgba(0,0,0,0.18)";
+    ctx.beginPath();
+    ctx.ellipse(0, 8, 22, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    function leg(side, ang) {
+      const s = side;
+      const hipX = 7 * s;
+      const thighL = 30;
+      const calfL = 28;
+      const kneeBend = Math.max(-0.2, Math.min(0.9, -ang * 0.8));
+      ctx.save();
+      ctx.translate(hipX, hipY);
+      ctx.rotate(ang);
+      ctx.fillStyle = uni2;
+      roundRect(-6, 0, 12, thighL, 7); ctx.fill();
+      ctx.translate(0, thighL - 2);
+      ctx.rotate(kneeBend);
+      roundRect(-6, 0, 12, calfL, 7); ctx.fill();
+      ctx.translate(0, calfL - 2);
+      ctx.fillStyle = shoe;
+      roundRect(-10, 0, 20, 8, 4); ctx.fill();
+      ctx.restore();
+    }
+    leg(-1, legA);
+    leg(1, legB);
+
+    // torso
+    shadow(() => {
+      ctx.fillStyle = uni;
+      roundRect(-18, torsoY, 36, 54, 14);
+      ctx.fill();
+    }, 10, 0, 6, "rgba(0,0,0,0.12)");
+
+    // badge
+    ctx.fillStyle = "#fbbf24";
+    ctx.beginPath();
+    ctx.arc(10, torsoY + 22, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // arms
+    function arm(side, ang) {
+      const s = side;
+      const shoulderX = 20 * s;
+      const shoulderY = torsoY + 14;
+      const upper = 20;
+      const lower = 18;
+      const elbow = Math.max(-0.6, Math.min(0.9, -ang * 0.35));
+      ctx.save();
+      ctx.translate(shoulderX, shoulderY);
+      ctx.rotate(ang);
+      ctx.fillStyle = uni;
+      roundRect(-5, 0, 10, upper, 6); ctx.fill();
+      ctx.translate(0, upper - 2);
+      ctx.rotate(elbow);
+      roundRect(-5, 0, 10, lower, 6); ctx.fill();
+      ctx.translate(0, lower - 2);
+      ctx.fillStyle = skin;
+      roundRect(-5, 0, 10, 10, 5); ctx.fill();
+      ctx.restore();
+    }
+    arm(-1, armA);
+    arm(1, armB);
+
+    // baton on right
+    ctx.save();
+    ctx.translate(26, torsoY + 30);
+    ctx.rotate(-0.35);
+    ctx.fillStyle = "#111827";
+    roundRect(-2, 0, 4, 24, 2);
+    ctx.fill();
+    ctx.restore();
+
+    // neck
+    ctx.fillStyle = skin;
+    roundRect(-5, headY + 18, 10, 12, 5);
+    ctx.fill();
+
+    // head
+    const faceGrad = ctx.createRadialGradient(-5, headY - 6, 6, 0, headY - 2, 18);
+    faceGrad.addColorStop(0, "#ffd6a8");
+    faceGrad.addColorStop(1, skin);
+    ctx.fillStyle = faceGrad;
+    ctx.beginPath();
+    ctx.arc(0, headY, 15, 0, Math.PI * 2);
+    ctx.fill();
+
+    // angry eyes
+    ctx.fillStyle = "#0b1220";
+    ctx.beginPath();
+    ctx.arc(-5, headY - 3, 1.6, 0, Math.PI * 2);
+    ctx.arc(5, headY - 3, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#0b1220";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-9, headY - 8); ctx.lineTo(-2, headY - 6);
+    ctx.moveTo(9, headY - 8); ctx.lineTo(2, headY - 6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-5, headY + 8);
+    ctx.quadraticCurveTo(0, headY + 3, 5, headY + 8);
+    ctx.stroke();
+
+    // cap
+    ctx.fillStyle = "#020617";
+    roundRect(-16, headY - 22, 32, 8, 4); ctx.fill();
+    roundRect(-10, headY - 28, 20, 7, 4); ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawHat(hatId, headY) {
+    if (!hatId || hatId === HATS.none) return;
+    if (hatId === HATS.red_snap) {
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath();
+      ctx.arc(0, headY - 4, 15, Math.PI, 0);
+      ctx.fill();
+      ctx.fillRect(-16, headY - 4, 32, 5);
+      ctx.fillRect(-4, headY - 2, 16, 3);
+    } else if (hatId === HATS.blue_snap) {
+      ctx.fillStyle = "#1d4ed8";
+      ctx.beginPath();
+      ctx.arc(0, headY - 4, 15, Math.PI, 0);
+      ctx.fill();
+      ctx.fillRect(-16, headY - 4, 32, 5);
+      ctx.fillStyle = "#1e40af";
+      ctx.fillRect(-6, headY - 2, 18, 3);
+    } else if (hatId === HATS.black_beanie) {
+      ctx.fillStyle = "#0b1220";
+      ctx.beginPath();
+      ctx.arc(0, headY - 6, 14, Math.PI, 0);
+      ctx.fill();
+      ctx.fillRect(-14, headY - 6, 28, 6);
+    } else if (hatId === HATS.white_bucket) {
+      ctx.fillStyle = "#e5e7eb";
+      ctx.beginPath();
+      ctx.arc(0, headY - 6, 13, Math.PI, 0);
+      ctx.fill();
+      ctx.fillRect(-16, headY - 6, 32, 4);
+      ctx.beginPath();
+      ctx.moveTo(-16, headY - 2);
+      ctx.lineTo(16, headY - 2);
+      ctx.lineTo(12, headY + 6);
+      ctx.lineTo(-12, headY + 6);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // ================== Obstacles / Coins ==================
+  function drawObstacles() {
+    for (const o of obstacles) {
+      ctx.fillStyle = "#166534";
+      roundRect(o.x, o.y - o.h, o.w, o.h, 8);
+      ctx.fill();
+      ctx.fillStyle = "#22c55e";
+      roundRect(o.x + 4, o.y - o.h + 10, o.w - 8, 10, 6);
+      ctx.fill();
+    }
+  }
+
+  function drawCoins() {
+    for (const c of coins) {
+      const g = ctx.createRadialGradient(c.x - 3, c.y - 3, 2, c.x, c.y, c.r);
+      g.addColorStop(0, "#fff7c2");
+      g.addColorStop(1, "#facc15");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#eab308";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.r * 0.65, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // ================== UI Screens ==================
+  function drawPauseButton() {
+    const r = pauseBtnRect();
+    ctx.fillStyle = "rgba(15,23,42,0.85)";
+    roundRect(r.x, r.y, r.w, r.h, 10);
+    ctx.fill();
+    ctx.fillStyle = "#e5e7eb";
+    ctx.fillRect(r.x + 12, r.y + 10, 4, 20);
+    ctx.fillRect(r.x + 24, r.y + 10, 4, 20);
+  }
+
+  function drawHUD() {
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, W, UI.hudH);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "16px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillText("Score: " + score, UI.pad, 18);
+    ctx.fillText("Level: " + level + "  Speed: " + (1 + 0.1 * (level - 1)).toFixed(1) + "x", UI.pad, 40);
+
+    const cText = "Coins: " + coinsBalance;
+    const w = ctx.measureText(cText).width;
+    ctx.fillText(cText, W - UI.pad - UI.pauseBtnSize - 12 - w, 28);
+    drawPauseButton();
+  }
+
+  function drawOverlay(title, subtitle) {
+    ctx.fillStyle = "rgba(2,6,23,0.7)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "700 42px system-ui, sans-serif";
+    ctx.fillText(title, W / 2, H * 0.40);
+    ctx.font = "18px system-ui, sans-serif";
+    ctx.fillText(subtitle, W / 2, H * 0.55);
+  }
+
+  function handleMenuClick(x, y) {
+    const bw = W * 0.42;
+    const bh = 62;
+    const cx = W / 2;
+    const y0 = H * 0.55;
+    const play = { x: cx - bw / 2, y: y0, w: bw, h: bh };
+    const shop = { x: cx - bw / 2, y: y0 + bh + 18, w: bw, h: bh };
+    if (inRect(x, y, play.x, play.y, play.w, play.h)) { resetRun(); state = State.GAME; return; }
+    if (inRect(x, y, shop.x, shop.y, shop.w, shop.h)) { state = State.SHOP; return; }
+  }
+
+  function drawMenu() {
+    drawBackground();
+
+    // cinematic vignette
+    const v = ctx.createRadialGradient(W * 0.5, H * 0.45, W * 0.2, W * 0.5, H * 0.45, W * 0.85);
+    v.addColorStop(0, "rgba(0,0,0,0)");
+    v.addColorStop(1, "rgba(0,0,0,0.35)");
+    ctx.fillStyle = v;
+    ctx.fillRect(0, 0, W, H);
+
+    // dancer (rapper)
+    const bounce = Math.sin(time * 3.2) * 6;
+    drawRapper(W * 0.26, groundY + bounce, (time * 0.45) % 1, false, 0, equipped.hat);
+
+    // header panel
+    ctx.fillStyle = "rgba(2,6,23,0.72)";
+    ctx.fillRect(0, 0, W, H * 0.32);
+    ctx.fillStyle = "#f8fafc";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "800 34px system-ui, sans-serif";
+    ctx.fillText("RUNNER RAP", W / 2, H * 0.12);
+    ctx.font = "16px system-ui, sans-serif";
+    ctx.fillText("Play / Shop  •  Coins saved", W / 2, H * 0.19);
+
+    const bw = W * 0.42;
+    const bh = 62;
+    const x = W / 2 - bw / 2;
+    const y = H * 0.55;
+    // play
+    ctx.fillStyle = "#16a34a";
+    roundRect(x, y, bw, bh, 18); ctx.fill();
+    ctx.fillStyle = "#ecfdf5";
+    ctx.font = "22px system-ui, sans-serif";
+    ctx.fillText("▶ Play", W / 2, y + bh / 2);
+    // shop
+    ctx.fillStyle = "#1d4ed8";
+    roundRect(x, y + bh + 18, bw, bh, 18); ctx.fill();
+    ctx.fillStyle = "#eff6ff";
+    ctx.fillText("🛒 Shop", W / 2, y + bh + 18 + bh / 2);
+  }
+
+  function handlePauseClick(x, y) {
+    const bw = W * 0.32;
+    const bh = 60;
+    const cx = W / 2;
+    const cy = H / 2;
+    if (inRect(x, y, cx - bw / 2, cy - bh / 2, bw, bh)) togglePause();
+  }
+
+  function drawPause() {
+    // draw underlying frame already drawn, just overlay
+    ctx.fillStyle = "rgba(2,6,23,0.65)";
+    ctx.fillRect(0, 0, W, H);
+    const bw = W * 0.32;
+    const bh = 60;
+    const cx = W / 2;
+    const cy = H / 2;
+    ctx.fillStyle = "#111827";
+    roundRect(cx - bw / 2, cy - bh / 2, bw, bh, 16); ctx.fill();
+    ctx.fillStyle = "#e5e7eb";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "22px system-ui, sans-serif";
+    ctx.fillText("Continue", cx, cy);
+  }
+
+  function handleShopClick(x, y) {
+    const margin = 28;
+    const back = { x: margin, y: margin, w: 120, h: 44 };
+    if (inRect(x, y, back.x - 10, back.y - 10, back.w + 20, back.h + 20)) { state = State.MENU; return; }
+
+    const listTop = H * 0.26;
+    const itemH = 96;
+    const listX = margin;
+    const listW = W - margin * 2;
+    for (let i = 0; i < shopItems.length; i++) {
+      const item = shopItems[i];
+      const y0 = listTop + i * (itemH + 14);
+      const buyW = 110;
+      const buyH = 44;
+      const buyX = listX + listW - buyW - 16;
+      const buyY = y0 + itemH / 2 - buyH / 2;
+      if (!inRect(x, y, buyX, buyY, buyW, buyH)) continue;
+
+      const isOwned = !!owned[item.id];
+      if (!isOwned) {
+        if (coinsBalance >= item.price) {
+          setCoins(coinsBalance - item.price);
+          setOwned(item.id, true);
+          setEquippedHat(item.id);
+        }
+      } else {
+        setEquippedHat(item.id);
+      }
+      return;
+    }
+  }
+
+  function drawHatPreview(id, cx, cy, s) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(s, s);
+    const headY = 0;
+    drawHat(id, headY);
+    ctx.restore();
+  }
+
+  function drawShop() {
+    drawBackground();
+    ctx.fillStyle = "rgba(2,6,23,0.78)";
+    ctx.fillRect(0, 0, W, H);
+
+    const margin = 28;
+
+    // header
+    ctx.fillStyle = "#e5e7eb";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = "800 28px system-ui, sans-serif";
+    ctx.fillText("Shop", margin, margin);
+    ctx.font = "16px system-ui, sans-serif";
+    ctx.fillText("Coins: " + coinsBalance, margin, margin + 34);
+
+    // back
+    ctx.fillStyle = "#1d4ed8";
+    roundRect(margin, margin, 120, 44, 12); ctx.fill();
+    ctx.fillStyle = "#eff6ff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "18px system-ui, sans-serif";
+    ctx.fillText("Back", margin + 60, margin + 22);
+
+    // list
+    const listTop = H * 0.26;
+    const itemH = 96;
+    const listW = W - margin * 2;
+    for (let i = 0; i < shopItems.length; i++) {
+      const item = shopItems[i];
+      const y0 = listTop + i * (itemH + 14);
+      ctx.fillStyle = "rgba(17,24,39,0.92)";
+      roundRect(margin, y0, listW, itemH, 18); ctx.fill();
+
+      // preview
+      drawHatPreview(item.id, margin + 54, y0 + itemH / 2 + 6, 1.25);
+
+      // text
+      ctx.fillStyle = "#e5e7eb";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.font = "20px system-ui, sans-serif";
+      ctx.fillText(item.name, margin + 110, y0 + 20);
+      ctx.font = "16px system-ui, sans-serif";
+      ctx.fillStyle = "#9ca3af";
+      ctx.fillText("Price: " + item.price + " coins", margin + 110, y0 + 50);
+
+      const isOwned = !!owned[item.id];
+      const isEq = equipped.hat === item.id;
+
+      // button
+      const buyW = 110;
+      const buyH = 44;
+      const buyX = margin + listW - buyW - 16;
+      const buyY = y0 + itemH / 2 - buyH / 2;
+
+      if (!isOwned) {
+        ctx.fillStyle = coinsBalance >= item.price ? "#16a34a" : "#4b5563";
+        roundRect(buyX, buyY, buyW, buyH, 12); ctx.fill();
+        ctx.fillStyle = "#e5e7eb";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "18px system-ui, sans-serif";
+        ctx.fillText("Buy", buyX + buyW / 2, buyY + buyH / 2);
+      } else {
+        ctx.fillStyle = isEq ? "#22c55e" : "#64748b";
+        roundRect(buyX, buyY, buyW, buyH, 12); ctx.fill();
+        ctx.fillStyle = "#e5e7eb";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "16px system-ui, sans-serif";
+        ctx.fillText(isEq ? "Equipped" : "Wear", buyX + buyW / 2, buyY + buyH / 2);
+      }
+    }
+  }
+
+  // ================== Render ==================
+  function render() {
+    drawBackground();
+    drawObstacles();
+    drawCoins();
+    drawPolice(police.x(), police.y, police.pose);
+    drawRapper(player.x(), player.y, player.pose, !player.onGround, player.fall, equipped.hat);
+    drawHUD();
+    if (state === State.PAUSE) drawPause();
+    if (state === State.GAME_OVER) drawOverlay("GAME OVER", "Tap to return to menu");
+  }
+
+  // ================== Main loop ==================
+  let last = 0;
+  function frame(ts) {
+    if (!last) last = ts;
+    const dt = Math.min(0.05, (ts - last) / 1000);
+    last = ts;
+    time += dt;
+
+    ctx.clearRect(0, 0, W, H);
+
+    if (state === State.GAME) update(dt);
+
+    if (state === State.MENU) {
+      drawMenu();
+    } else if (state === State.SHOP) {
+      drawShop();
+    } else {
+      render();
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  // init
+  resetRun();
+  scheduleSpawn();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,height=device-height,initial-scale=1.0" />
+  <title>Runner Game</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #020617;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    canvas {
+      display: block;
       background: #eaf4ff;
       touch-action: manipulation;
     }
