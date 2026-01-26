@@ -22,6 +22,8 @@ canvas { display:block; }
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
+const bgImage = new Image();
+bgImage.src = "background.png";
 
 // sounds
 const bgMusic = new Audio("Untitled Project 2.mp3");
@@ -50,6 +52,10 @@ let player={ x:canvas.width*0.3, y:0, vy:0, jumping:false, falling:false };
 let police={ x:canvas.width*0.15, y:0 };
 
 let obstacles=[];
+let coins = [];
+let boosts = [];
+let invincible = false;
+let jumpBoost = false;
 let gravity=1;
 let score=0;
 let level=1;
@@ -61,7 +67,7 @@ let bgOffset=0;
 // input
 function jump(){
   if(!player.jumping && !player.falling){
-    player.vy=-canvas.height*0.04;
+    player.vy = -(jumpBoost ? canvas.height*0.06 : canvas.height*0.04);
     player.jumping=true;
   }
   if(!musicStarted){
@@ -76,59 +82,160 @@ document.addEventListener("touchstart",jump);
 
 // spawn bins
 function spawnObstacle(){
+  const type = Math.random();
+
+  let h;
+  if(type < 0.33){
+    h = canvas.height*0.08; // низкое
+  } else if(type < 0.66){
+    h = canvas.height*0.15; // высокое
+  } else {
+    h = canvas.height*0.12; // обычное
+  }
+
   obstacles.push({
-    x:canvas.width,
-    y:groundY,
-    w:canvas.width*0.05,
-    h:canvas.height*0.12
+    x: canvas.width,
+    y: groundY,
+    w: canvas.width*0.05,
+    h: h,
+    moving: type > 0.66
   });
 }
-setInterval(spawnObstacle,1800);
+
+
+// coins
+function spawnCoin(){
+  coins.push({
+    x: canvas.width,
+    y: groundY - canvas.height*0.15,
+    r: 10
+  });
+}
+
+function spawnBoost(){
+  const types = ["speed","jump","shield"];
+  boosts.push({
+    x: canvas.width,
+    y: groundY - canvas.height*0.2,
+    type: types[Math.floor(Math.random()*types.length)],
+    r: 12
+  });
+}
+
+function drawCoins(){
+  for(let c of coins){
+    ctx.fillStyle="gold";
+    ctx.beginPath();
+    ctx.arc(c.x,c.y,c.r,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function drawBoosts(){
+  for(let b of boosts){
+    if(b.type==="speed") ctx.fillStyle="red";
+    if(b.type==="jump") ctx.fillStyle="blue";
+    if(b.type==="shield") ctx.fillStyle="purple";
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,b.r,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+setInterval(spawnCoin, 1500);
+setInterval(spawnBoost, 5000);
+
 
 // update
 function update(){
   if(gameOver) return;
 
-  player.y+=player.vy;
-  player.vy+=gravity;
+  player.y += player.vy;
+  player.vy += gravity;
 
-  if(player.y>=groundY){
-    player.y=groundY;
-    player.jumping=false;
+  if(player.y >= groundY){
+    player.y = groundY;
+    player.jumping = false;
   }
 
-  police.y=player.y;
+  police.y = player.y;
 
   for(let obs of obstacles){
-    obs.x-=canvas.width*speed;
+    obs.x -= canvas.width * speed;
+
+    if(obs.moving){
+      obs.y = groundY - obs.h + Math.sin(step * 0.1) * 20;
+    }
 
     if(
-      player.x<obs.x+obs.w &&
-      player.x+40>obs.x &&
-      player.y-100<obs.y &&
-      player.y>obs.y-obs.h
+      !invincible &&
+      player.x < obs.x + obs.w &&
+      player.x + 40 > obs.x &&
+      player.y - 100 < obs.y &&
+      player.y > obs.y - obs.h
     ){
-      gameOver=true;
-      player.falling=true;
+      gameOver = true;
+      player.falling = true;
       bgMusic.pause();
       stepSound.pause();
     }
   }
 
-  obstacles=obstacles.filter(o=>o.x+o.w>0);
-  score++; step++; bgOffset-=canvas.width*0.001;
+  obstacles = obstacles.filter(o => o.x + o.w > 0);
 
-  // levels
-  if(score%1500===0){
+  // === МОНЕТЫ ===
+  coins = coins.filter(c=>{
+    if(
+      player.x < c.x + c.r &&
+      player.x + 40 > c.x - c.r &&
+      player.y - 100 < c.y + c.r &&
+      player.y > c.y - c.r
+    ){
+      score += 100;
+      return false;
+    }
+    return c.x > 0;
+  });
+
+  // === БУСТЫ ===
+  boosts = boosts.filter(b=>{
+    if(
+      player.x < b.x + b.r &&
+      player.x + 40 > b.x - b.r &&
+      player.y - 100 < b.y + b.r &&
+      player.y > b.y - b.r
+    ){
+      if(b.type === "speed") speed += 0.002;
+      if(b.type === "jump") jumpBoost = true;
+      if(b.type === "shield") invincible = true;
+
+      setTimeout(()=>{
+        speed = 0.008;
+        jumpBoost = false;
+        invincible = false;
+      },4000);
+
+      return false;
+    }
+    return b.x > 0;
+  });
+
+  score++;
+  step++;
+  bgOffset -= canvas.width * 0.001;
+
+  if(score % 1500 === 0){
     level++;
-    speed+=0.001;
+    speed += 0.001;
   }
 }
 
+
 // background
 function drawBackground(){
+    ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
   ctx.fillStyle="#bde7ff";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+  // ctx.fillRect(0,0,canvas.width,canvas.height);
 
   ctx.fillStyle="#ccc";
   for(let i=0;i<20;i++){
@@ -306,6 +413,8 @@ function loop(){
   drawPolice();
   drawPlayer();
   drawObstacles();
+  drawCoins();
+  drawBoosts();
   drawScore();
 
   if(gameOver){
