@@ -34,21 +34,56 @@ stepSound.loop = true; stepSound.volume = 0.2;
 
 let musicStarted=false;
 
-// resize
-function resizeCanvas(){
-  canvas.width=window.innerWidth;
-  canvas.height=window.innerHeight;
+// resize + ground
+let groundY = 0;
+
+function getViewportSize(){
+  const tg = window.Telegram && window.Telegram.WebApp;
+  // если есть Telegram WebApp API, берём высоту вьюпорта оттуда
+  if(tg && typeof tg.viewportHeight === "number" && tg.viewportHeight > 0){
+    const width =
+      window.innerWidth ||
+      document.documentElement.clientWidth ||
+      document.body.clientWidth ||
+      0;
+    return { width, height: tg.viewportHeight };
+  }
+
+  const width =
+    document.documentElement.clientWidth ||
+    document.body.clientWidth ||
+    window.innerWidth;
+  const height =
+    document.documentElement.clientHeight ||
+    document.body.clientHeight ||
+    window.innerHeight;
+
+  return { width, height };
 }
-window.addEventListener("resize",resizeCanvas);
+
+function resizeCanvas(){
+  const vp = getViewportSize();
+
+  canvas.style.width = vp.width + "px";
+  canvas.style.height = vp.height + "px";
+  canvas.width = vp.width;
+  canvas.height = vp.height;
+
+  groundY = canvas.height * 0.8;
+}
+
+window.addEventListener("resize", resizeCanvas);
+
+// подписка на изменение вьюпорта Telegram Mini App, если доступно
+if(window.Telegram && window.Telegram.WebApp){
+  window.Telegram.WebApp.onEvent("viewportChanged", resizeCanvas);
+  window.Telegram.WebApp.ready();
+}
+
 resizeCanvas();
 
-// ground
-let groundY;
-function updateGround(){ groundY = canvas.height*0.8; }
-updateGround();
-
 // entities
-let player={ x:canvas.width*0.3, y:0, vy:0, jumping:false, falling:false };
+let player={ x:canvas.width*0.3, y:groundY, vy:0, jumping:false, falling:false };
 let police={ x:canvas.width*0.15, y:0 };
 
 let obstacles=[];
@@ -59,10 +94,12 @@ let jumpBoost = false;
 let gravity=1;
 let score=0;
 let level=1;
-let speed=0.008;
+let baseSpeed=0.008;
+let speed=baseSpeed;
 let gameOver=false;
 let step=0;
 let bgOffset=0;
+let boostTimeoutId=null;
 
 // input
 function jump(){
@@ -142,8 +179,8 @@ function drawBoosts(){
   }
 }
 
-setInterval(spawnCoin, 1500);
-setInterval(spawnBoost, 5000);
+const coinInterval = setInterval(spawnCoin, 1500);
+const boostInterval = setInterval(spawnBoost, 5000);
 
 
 // update
@@ -178,6 +215,8 @@ function update(){
       player.falling = true;
       bgMusic.pause();
       stepSound.pause();
+      clearInterval(coinInterval);
+      clearInterval(boostInterval);
     }
   }
 
@@ -205,14 +244,16 @@ function update(){
       player.y - 100 < b.y + b.r &&
       player.y > b.y - b.r
     ){
-      if(b.type === "speed") speed += 0.002;
+      if(b.type === "speed") speed = baseSpeed + 0.002;
       if(b.type === "jump") jumpBoost = true;
       if(b.type === "shield") invincible = true;
 
-      setTimeout(()=>{
-        speed = 0.008;
+      if(boostTimeoutId) clearTimeout(boostTimeoutId);
+      boostTimeoutId = setTimeout(()=>{
+        speed = baseSpeed;
         jumpBoost = false;
         invincible = false;
+        boostTimeoutId = null;
       },4000);
 
       return false;
@@ -226,7 +267,10 @@ function update(){
 
   if(score % 1500 === 0){
     level++;
-    speed += 0.001;
+    baseSpeed += 0.001;
+    if(!boostTimeoutId){
+      speed = baseSpeed;
+    }
   }
 }
 
@@ -407,7 +451,6 @@ function loop(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
   drawBackground();
-  updateGround();
   update();
   drawGround();
   drawPolice();
