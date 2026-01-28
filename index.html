@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,height=device-height,initial-scale=1.0" />
-  <title>Runner Game</title>
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Runner Rap Game</title>
   <style>
     html, body {
       margin: 0;
@@ -11,1157 +11,747 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #101827;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f172a;
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      touch-action: none; /* Отключаем зум и скролл на мобилках */
+      user-select: none;
+      -webkit-user-select: none;
     }
     canvas {
       display: block;
-      background: #eaf4ff;
-      touch-action: manipulation;
+      width: 100%;
+      height: 100%;
+    }
+    #loading {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-size: 20px;
+      pointer-events: none;
     }
   </style>
 </head>
 <body>
+
+<div id="loading">Loading assets...</div>
 <canvas id="game"></canvas>
 
 <script>
 (function () {
   "use strict";
 
-  // --- CANVAS & RESIZE -----------------------------------------------------
+  // --- AUDIO SYSTEM (FIXED) ------------------------------------------------
+  const audioFile = "Untitled Project 2.mp3";
+  const bgMusic = new Audio();
+  bgMusic.src = audioFile;
+  bgMusic.loop = true;
+  bgMusic.volume = 0.5;
+  
+  let musicStarted = false;
+
+  function initAudio() {
+    if (musicStarted) return;
+    
+    // Пытаемся запустить
+    bgMusic.play().then(() => {
+      musicStarted = true;
+      console.log("Music started successfully");
+    }).catch((e) => {
+      console.warn("Autoplay prevented. Music will start on next interaction.", e);
+    });
+  }
+
+  // --- ENGINE SETUP --------------------------------------------------------
   const canvas = document.getElementById("game");
-  const ctx = canvas.getContext("2d");
-
-  let width = 0;
-  let height = 0;
-  let groundY = 0;
-
-  function resizeCanvas() {
-    width =
-      window.innerWidth ||
-      document.documentElement.clientWidth ||
-      document.body.clientWidth ||
-      400;
-    height =
-      window.innerHeight ||
-      document.documentElement.clientHeight ||
-      document.body.clientHeight ||
-      600;
-
+  const ctx = canvas.getContext("2d", { alpha: false }); // Optimisation
+  const loading = document.getElementById("loading");
+  
+  let width, height, groundY;
+  
+  function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
     canvas.width = width;
     canvas.height = height;
-    groundY = height * 0.82;
+    groundY = height * 0.85; // Земля ниже
+    loading.style.display = 'none';
   }
+  window.addEventListener('resize', resize);
+  resize();
 
-  window.addEventListener("resize", resizeCanvas);
-  resizeCanvas();
+  // --- GAME CONSTANTS ------------------------------------------------------
+  const GRAVITY = 2800; 
+  const JUMP_FORCE = 950;
+  const BASE_SPEED = 500; // Стартовая скорость (пикселей в секунду)
+  const SCORE_PER_LEVEL = 100; // Очков для повышения уровня
+  
+  const GameState = { MENU: 0, GAME: 1, GAMEOVER: 2, SHOP: 3 };
+  let currentState = GameState.MENU;
 
-  // --- AUDIO SETUP ---------------------------------------------------------
-  // Создаем аудио объект. Файл должен лежать рядом с index.html
-  const bgMusic = new Audio("Untitled Project 2.mp3");
-  bgMusic.loop = true;   // зацикливаем
-  bgMusic.volume = 0.6;  // громкость 60%
-
-  // Функция для безопасного запуска музыки (браузеры требуют действие пользователя)
-  function tryPlayMusic() {
-    if (bgMusic.paused) {
-      bgMusic.play().catch((err) => {
-        console.warn("Autoplay blocked until user interaction:", err);
-      });
-    }
-  }
-
-  // --- GAME STATE ----------------------------------------------------------
-  const GameState = {
-    MENU: "menu",
-    GAME: "game",
-    PAUSE: "pause",
-    SHOP: "shop",
-    GAME_OVER: "gameover"
-  };
-
-  let gameState = GameState.MENU;
-
-  // --- CONSTANTS -----------------------------------------------------------
-  const GRAVITY = 2500; // px/s^2
-  const BASE_RUN_SPEED = 430; // px/s at level 1
-  const LEVEL_SCORE_STEP = 600; // сколько очков на уровень
-  const OBSTACLE_MIN_INTERVAL = 1.2; // сек
-  const OBSTACLE_MAX_INTERVAL = 2.1; // сек
-  const COIN_OFFSET_X = 90; // px от препятствия
-  const COIN_HEIGHT_FACTOR = 0.16; // высота монет над землей
-  const PLAYER_WIDTH = 36;
-  const PLAYER_HEIGHT = 96;
-  const POLICE_WIDTH = 34;
-  const POLICE_HEIGHT = 94;
-
-  const HAT_NONE = "none";
-  const HAT_BANDANA = "bandana";
-  const HAT_RED_CAP = "red_cap";
-  const HAT_BLUE_CAP = "blue_cap";
-
-  // --- PLAYER & POLICE -----------------------------------------------------
+  // --- ASSETS & VARIABLES --------------------------------------------------
+  // Игрок
   const player = {
-    x: () => width * 0.3,
+    x: 100, // фиксированный X
     y: groundY,
     vy: 0,
-    jumping: false,
-    falling: false,
-    onGround: true
+    w: 50,
+    h: 110,
+    isGrounded: true,
+    runAnimFrame: 0,
+    hat: "none"
   };
 
+  // Полиция
   const police = {
-    x: () => width * 0.18,
+    x: -100, // Сзади игрока
     y: groundY,
-    vy: 0
+    offsetTarget: 120, // Расстояние от игрока
+    runAnimFrame: 0
   };
 
-  // --- WORLD OBJECTS -------------------------------------------------------
-  const obstacles = [];
-  const coins = [];
-
-  let obstacleSpawnTimer = 0;
-  let nextObstacleInterval = 1.5;
-  let coinSpawnTimer = 0;
-
-  // --- GAME VARIABLES ------------------------------------------------------
+  // Мир
+  let obstacles = [];
+  let coins = [];
+  let particles = []; // Для эффектов
+  
+  let gameTime = 0;
   let score = 0;
+  let displayScore = 0; // Плавный счетчик
   let level = 1;
-  let runSpeed = BASE_RUN_SPEED;
-  let gameCoins = 0;
-  let isGameOverTriggered = false;
+  let speed = BASE_SPEED;
+  let coinsCount = 0;
+  
+  let obstacleTimer = 0;
 
-  // background animation offsets
-  let bgFarOffset = 0;
-  let bgCityOffset = 0;
-
-  // menu dancer animation
-  let menuTime = 0;
-
-  // --- SHOP / INVENTORY ----------------------------------------------------
-  const inventory = [
-    {
-      id: HAT_BANDANA,
-      name: "Bandana",
-      price: 20,
-      owned: false
-    },
-    {
-      id: HAT_RED_CAP,
-      name: "Red Cap",
-      price: 40,
-      owned: false
-    },
-    {
-      id: HAT_BLUE_CAP,
-      name: "Blue Cap",
-      price: 60,
-      owned: false
-    }
+  // Shop items
+  const shopItems = [
+    { id: "bandana", name: "Red Bandana", price: 50, owned: false, color: "#ef4444" },
+    { id: "cap", name: "Blue Cap", price: 100, owned: false, color: "#3b82f6" },
+    { id: "crown", name: "Gold Crown", price: 300, owned: false, color: "#eab308" }
   ];
 
-  let equippedHat = HAT_NONE;
+  // --- INPUT HANDLING ------------------------------------------------------
+  let isJumpPressed = false;
 
-  // --- INPUT ---------------------------------------------------------------
-  let pointerX = 0;
-  let pointerY = 0;
+  function handleInput(type, x, y) {
+    // Пытаемся включить музыку при любом нажатии
+    initAudio();
 
-  function getPointerPos(evt) {
-    const rect = canvas.getBoundingClientRect();
-    if (evt.touches && evt.touches.length > 0) {
-      return {
-        x: evt.touches[0].clientX - rect.left,
-        y: evt.touches[0].clientY - rect.top
-      };
-    }
-    return {
-      x: evt.clientX - rect.left,
-      y: evt.clientY - rect.top
-    };
-  }
-
-  function handlePointerDown(evt) {
-    // Пытаемся запустить музыку при любом клике
-    tryPlayMusic();
-
-    const pos = getPointerPos(evt);
-    pointerX = pos.x;
-    pointerY = pos.y;
-
-    if (gameState === GameState.MENU) {
-      handleMenuClick(pointerX, pointerY);
-    } else if (gameState === GameState.SHOP) {
-      handleShopClick(pointerX, pointerY);
-    } else if (gameState === GameState.GAME) {
-      if (isInsidePauseButton(pointerX, pointerY)) {
-        togglePause();
-      } else {
-        playerJump();
-      }
-    } else if (gameState === GameState.PAUSE) {
-      handlePauseClick(pointerX, pointerY);
-    } else if (gameState === GameState.GAME_OVER) {
-      resetGame();
-      gameState = GameState.MENU;
-    }
-  }
-
-  canvas.addEventListener("mousedown", handlePointerDown);
-  canvas.addEventListener("touchstart", function (evt) {
-    evt.preventDefault();
-    handlePointerDown(evt);
-  });
-
-  document.addEventListener("keydown", function (evt) {
-    // Пытаемся запустить музыку при нажатии клавиш
-    tryPlayMusic();
-
-    if (evt.code === "Space" || evt.code === "ArrowUp") {
-      if (gameState === GameState.GAME) {
-        playerJump();
-      }
-    } else if (evt.code === "Escape") {
-      if (gameState === GameState.GAME || gameState === GameState.PAUSE) {
-        togglePause();
-      }
-    } else if (evt.code === "Enter") {
-      if (gameState === GameState.GAME_OVER) {
+    if (currentState === GameState.MENU) {
+      // Кнопка PLAY
+      if (x > width/2 - 100 && x < width/2 + 100 && y > height/2 && y < height/2 + 60) {
         resetGame();
-        gameState = GameState.MENU;
+        currentState = GameState.GAME;
+      }
+      // Кнопка SHOP
+      if (x > width/2 - 100 && x < width/2 + 100 && y > height/2 + 80 && y < height/2 + 140) {
+        currentState = GameState.SHOP;
+      }
+    } 
+    else if (currentState === GameState.GAME) {
+      if (!isJumpPressed) {
+        doJump();
+        isJumpPressed = true;
       }
     }
-  });
-
-  // --- BUTTON HELPERS ------------------------------------------------------
-  function isInsideRect(x, y, rx, ry, rw, rh) {
-    return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
-  }
-
-  function isInsidePauseButton(x, y) {
-    const size = 40;
-    const margin = 16;
-    const rx = width - size - margin;
-    const ry = margin;
-    return isInsideRect(x, y, rx, ry, size, size);
-  }
-
-  function handleMenuClick(x, y) {
-    const buttonWidth = width * 0.4;
-    const buttonHeight = 60;
-    const centerX = width / 2;
-    const startY = height * 0.55;
-
-    const playRect = {
-      x: centerX - buttonWidth / 2,
-      y: startY,
-      w: buttonWidth,
-      h: buttonHeight
-    };
-
-    const shopRect = {
-      x: centerX - buttonWidth / 2,
-      y: startY + buttonHeight + 20,
-      w: buttonWidth,
-      h: buttonHeight
-    };
-
-    if (isInsideRect(x, y, playRect.x, playRect.y, playRect.w, playRect.h)) {
-      resetGame();
-      gameState = GameState.GAME;
-    } else if (isInsideRect(x, y, shopRect.x, shopRect.y, shopRect.w, shopRect.h)) {
-      gameState = GameState.SHOP;
+    else if (currentState === GameState.GAMEOVER) {
+      currentState = GameState.MENU;
     }
-  }
-
-  function handlePauseClick(x, y) {
-    const buttonWidth = width * 0.3;
-    const buttonHeight = 60;
-    const centerX = width / 2;
-    const centerY = height / 2;
-
-    const continueRect = {
-      x: centerX - buttonWidth / 2,
-      y: centerY - buttonHeight / 2,
-      w: buttonWidth,
-      h: buttonHeight
-    };
-
-    if (isInsideRect(x, y, continueRect.x, continueRect.y, continueRect.w, continueRect.h)) {
-      togglePause();
-    }
-  }
-
-  function handleShopClick(x, y) {
-    const margin = 40;
-    const itemHeight = 80;
-    const listTop = height * 0.3;
-    const listLeft = margin;
-    const listWidth = width - margin * 2;
-
-    // Back button
-    const backWidth = 120;
-    const backHeight = 44;
-    const backX = margin;
-    const backY = margin;
-    if (isInsideRect(x, y, backX, backY, backWidth, backHeight)) {
-      gameState = GameState.MENU;
-      return;
-    }
-
-    inventory.forEach(function (item, index) {
-      const rowY = listTop + index * (itemHeight + 12);
-
-      const buyWidth = 90;
-      const buyHeight = 40;
-      const buyX = listLeft + listWidth - buyWidth;
-      const buyY = rowY + itemHeight / 2 - buyHeight / 2;
-
-      if (isInsideRect(x, y, buyX, buyY, buyWidth, buyHeight)) {
-        if (!item.owned) {
-          if (gameCoins >= item.price) {
-            gameCoins -= item.price;
+    else if (currentState === GameState.SHOP) {
+      // Обработка кликов магазина (упрощенно)
+      // Кнопка Back
+      if (x > 20 && x < 120 && y > 20 && y < 70) {
+        currentState = GameState.MENU;
+        return;
+      }
+      // Покупка
+      const listStart = 150;
+      shopItems.forEach((item, i) => {
+        const itemY = listStart + i * 80;
+        if (y > itemY && y < itemY + 60 && x > width - 150) {
+          if (!item.owned && coinsCount >= item.price) {
+            coinsCount -= item.price;
             item.owned = true;
-            equippedHat = item.id;
+            player.hat = item.id;
+          } else if (item.owned) {
+            player.hat = item.id;
           }
-        } else {
-          // уже куплено -> экипировать
-          equippedHat = item.id;
         }
-      }
-    });
-  }
-
-  function togglePause() {
-    if (gameState === GameState.GAME) {
-      gameState = GameState.PAUSE;
-    } else if (gameState === GameState.PAUSE) {
-      gameState = GameState.GAME;
-    }
-  }
-
-  // --- PLAYER PHYSICS ------------------------------------------------------
-  function playerJump() {
-    if (player.onGround && !player.falling) {
-      const baseJumpVelocity = -Math.max(750, height * 2.1);
-      player.vy = baseJumpVelocity;
-      player.onGround = false;
-      player.jumping = true;
-    }
-  }
-
-  function resetGame() {
-    score = 0;
-    level = 1;
-    runSpeed = BASE_RUN_SPEED;
-    obstacles.length = 0;
-    coins.length = 0;
-    obstacleSpawnTimer = 0;
-    nextObstacleInterval = 1.5;
-    coinSpawnTimer = 0;
-    isGameOverTriggered = false;
-    player.y = groundY;
-    player.vy = 0;
-    player.jumping = false;
-    player.falling = false;
-    player.onGround = true;
-  }
-
-  // --- SPAWN HELPERS -------------------------------------------------------
-  function scheduleNextObstacle() {
-    nextObstacleInterval =
-      OBSTACLE_MIN_INTERVAL +
-      Math.random() * (OBSTACLE_MAX_INTERVAL - OBSTACLE_MIN_INTERVAL);
-  }
-
-  function spawnObstacle() {
-    const type = Math.random();
-    let h;
-    if (type < 0.33) {
-      h = height * 0.08; // низкое
-    } else if (type < 0.66) {
-      h = height * 0.15; // высокое
-    } else {
-      h = height * 0.12; // обычное
-    }
-
-    const w = width * 0.06;
-
-    obstacles.push({
-      x: width + w,
-      y: groundY,
-      w: w,
-      h: h
-    });
-
-    // монеты над/после препятствия
-    const coinY = groundY - height * COIN_HEIGHT_FACTOR;
-    const baseX = width + w + COIN_OFFSET_X;
-    const coinCount = 2 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < coinCount; i++) {
-      coins.push({
-        x: baseX + i * 40,
-        y: coinY - i * 4,
-        r: 10
       });
     }
   }
 
-  // --- UPDATE --------------------------------------------------------------
-  function updateGame(delta) {
-    if (gameState !== GameState.GAME) return;
+  function handleInputUp() {
+    isJumpPressed = false;
+  }
 
-    // скорость и уровни
-    const targetLevel = 1 + Math.floor(score / LEVEL_SCORE_STEP);
-    if (targetLevel !== level) {
-      level = targetLevel;
+  function doJump() {
+    if (player.isGrounded) {
+      player.vy = -JUMP_FORCE;
+      player.isGrounded = false;
+      spawnParticles(player.x + 20, player.y, 5, "#ccc"); // пыль
     }
-    const targetSpeed = BASE_RUN_SPEED * (1 + 0.1 * (level - 1));
-    const lerpFactor = 3 * delta; // плавное изменение
-    runSpeed = runSpeed + (targetSpeed - runSpeed) * Math.min(1, lerpFactor);
+  }
 
-    const worldSpeed = runSpeed;
+  window.addEventListener('mousedown', e => handleInput('mouse', e.clientX, e.clientY));
+  window.addEventListener('touchstart', e => {
+    handleInput('touch', e.touches[0].clientX, e.touches[0].clientY);
+    e.preventDefault(); // блокируем зум
+  }, {passive: false});
+  window.addEventListener('mouseup', handleInputUp);
+  window.addEventListener('touchend', handleInputUp);
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      initAudio();
+      if (currentState === GameState.GAME) doJump();
+      if (currentState === GameState.MENU && e.code === 'Enter') {
+         resetGame(); currentState = GameState.GAME; 
+      }
+      if (currentState === GameState.GAMEOVER && e.code === 'Enter') currentState = GameState.MENU;
+    }
+  });
 
-    // фон
-    bgFarOffset -= worldSpeed * 0.15 * delta;
-    bgCityOffset -= worldSpeed * 0.5 * delta;
+  // --- GAME LOGIC ----------------------------------------------------------
+  function resetGame() {
+    score = 0;
+    displayScore = 0;
+    level = 1;
+    speed = BASE_SPEED;
+    obstacles = [];
+    coins = [];
+    particles = [];
+    obstacleTimer = 0;
+    player.y = groundY;
+    player.vy = 0;
+    player.isGrounded = true;
+    police.x = -150;
+  }
 
-    // игрок
-    player.vy += GRAVITY * delta;
-    player.y += player.vy * delta;
+  function update(dt) {
+    if (currentState !== GameState.GAME) return;
+
+    gameTime += dt;
+    
+    // 1. Прогрессия и Скорость
+    // Плавное обновление счета
+    score += speed * dt * 0.05;
+    displayScore += (score - displayScore) * 0.1;
+
+    // Расчет уровня и множителя скорости
+    const newLevel = Math.floor(score / SCORE_PER_LEVEL) + 1;
+    if (newLevel > level) {
+      level = newLevel;
+      // Всплывашка "LEVEL UP" (упрощенно через частицы или текст в draw)
+    }
+    
+    // Формула: 1 уровень = 1.0, 2 уровень = 1.1, 10 уровень = 1.9 и т.д.
+    const targetSpeed = BASE_SPEED * (1 + (level - 1) * 0.1);
+    // Плавное ускорение
+    speed += (targetSpeed - speed) * dt * 2; 
+
+    // 2. Физика Игрока
+    player.vy += GRAVITY * dt;
+    player.y += player.vy * dt;
 
     if (player.y >= groundY) {
       player.y = groundY;
       player.vy = 0;
-      player.jumping = false;
-      player.falling = false;
-      player.onGround = true;
+      player.isGrounded = true;
     } else {
-      player.onGround = false;
+      player.isGrounded = false;
     }
 
-    // полицейский
-    police.y += (player.y - police.y) * 8 * delta;
+    // Анимация бега зависит от скорости
+    player.runAnimFrame += dt * (speed / 40);
 
-    // препятствия
-    for (let i = obstacles.length - 1; i >= 0; i--) {
-      const o = obstacles[i];
-      o.x -= worldSpeed * delta;
+    // 3. Полиция (резиновая логика)
+    // Полиция стремится держаться на расстоянии police.offsetTarget
+    // Если игрок спотыкается (можно добавить механику), полиция догоняет
+    let targetPoliceX = player.x - 120;
+    police.x += (targetPoliceX - police.x) * dt * 2;
+    police.runAnimFrame += dt * (speed / 38); // Полиция бежит чуть иначе
 
-      if (o.x + o.w < -50) {
-        obstacles.splice(i, 1);
-        continue;
-      }
-
-      // столкновение
-      const px = player.x();
-      const pyTop = player.y - PLAYER_HEIGHT;
-      const pyBottom = player.y;
-
-      const oxLeft = o.x;
-      const oxRight = o.x + o.w;
-      const oyTop = o.y - o.h;
-
-      if (
-        px < oxRight &&
-        px + PLAYER_WIDTH > oxLeft &&
-        pyBottom > oyTop &&
-        pyTop < o.y
-      ) {
-        if (!isGameOverTriggered) {
-          isGameOverTriggered = true;
-          player.falling = true;
-          player.vy = -400;
-          gameState = GameState.GAME_OVER;
-        }
-      }
-    }
-
-    // монеты
-    for (let i = coins.length - 1; i >= 0; i--) {
-      const c = coins[i];
-      c.x -= worldSpeed * delta;
-      if (c.x + c.r < -40) {
-        coins.splice(i, 1);
-        continue;
-      }
-
-      const px = player.x();
-      const pyTop = player.y - PLAYER_HEIGHT;
-      const pyBottom = player.y;
-
-      if (
-        px < c.x + c.r &&
-        px + PLAYER_WIDTH > c.x - c.r &&
-        pyBottom > c.y - c.r &&
-        pyTop < c.y + c.r
-      ) {
-        gameCoins += 1;
-        score += 30;
-        coins.splice(i, 1);
-      }
-    }
-
-    // спавн препятствий
-    obstacleSpawnTimer += delta;
-    if (obstacleSpawnTimer >= nextObstacleInterval) {
-      obstacleSpawnTimer = 0;
-      scheduleNextObstacle();
+    // 4. Генерация препятствий
+    obstacleTimer -= dt;
+    if (obstacleTimer <= 0) {
       spawnObstacle();
+      // Интервал уменьшается с уровнем, но не меньше 0.8 сек
+      let minTime = Math.max(0.8, 1.8 - (level * 0.05));
+      let maxTime = Math.max(1.2, 2.5 - (level * 0.05));
+      obstacleTimer = minTime + Math.random() * (maxTime - minTime);
     }
 
-    // счёт
-    score += Math.floor(worldSpeed * delta * 0.08);
+    // 5. Обновление объектов
+    updateEntities(dt);
   }
 
-  // --- DRAW: BACKGROUND ----------------------------------------------------
-  function drawBackground() {
-    // дальний фон — небо и солнце
-    const farOffset = bgFarOffset % width;
+  function spawnObstacle() {
+    const type = Math.random();
+    let obs = { x: width + 50, y: groundY, w: 50, h: 60, passed: false };
+    
+    if (type > 0.7) { // Высокое препятствие (мусорный бак)
+      obs.h = 90;
+      obs.w = 60;
+      obs.color = "#047857"; // зеленый бак
+    } else if (type > 0.4) { // Низкое (барьер)
+      obs.h = 50;
+      obs.w = 50;
+      obs.color = "#dc2626"; // красный барьер
+    } else { // Коробка
+      obs.h = 40;
+      obs.w = 40;
+      obs.color = "#d97706";
+    }
+    obstacles.push(obs);
 
-    // небо
-    const grad = ctx.createLinearGradient(0, 0, 0, height);
-    grad.addColorStop(0, "#5b7fff");
-    grad.addColorStop(1, "#bde7ff");
-    ctx.fillStyle = grad;
+    // Генерация монет (иногда над препятствием, иногда за ним)
+    if (Math.random() > 0.3) {
+      let coinY = groundY - obs.h - 60; // Прыжок
+      if (Math.random() > 0.5) coinY = groundY - 30; // Бег
+      
+      coins.push({
+        x: width + 50 + (Math.random() > 0.5 ? 0 : 100),
+        y: coinY,
+        r: 12,
+        picked: false
+      });
+    }
+  }
+
+  function updateEntities(dt) {
+    // Препятствия
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      let o = obstacles[i];
+      o.x -= speed * dt;
+
+      // Коллизия (AABB - Axis Aligned Bounding Box)
+      // Упрощенная коллизия: хитбокс игрока чуть меньше спрайта
+      if (
+        player.x + player.w - 15 > o.x && 
+        player.x + 15 < o.x + o.w &&
+        player.y - 10 > o.y - o.h
+      ) {
+        gameOver();
+      }
+
+      if (o.x < -100) obstacles.splice(i, 1);
+    }
+
+    // Монеты
+    for (let i = coins.length - 1; i >= 0; i--) {
+      let c = coins[i];
+      c.x -= speed * dt;
+      
+      // Дистанция для сбора
+      let dx = (player.x + player.w/2) - c.x;
+      let dy = (player.y - player.h/2) - c.y;
+      if (Math.sqrt(dx*dx + dy*dy) < 45) {
+        coinsCount++;
+        score += 10; // Бонус к счету
+        spawnParticles(c.x, c.y, 10, "#fbbf24");
+        coins.splice(i, 1);
+      } else if (c.x < -50) {
+        coins.splice(i, 1);
+      }
+    }
+
+    // Частицы
+    for (let i = particles.length - 1; i >= 0; i--) {
+      let p = particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  function spawnParticles(x, y, count, color) {
+    for(let i=0; i<count; i++) {
+      particles.push({
+        x: x, y: y,
+        vx: (Math.random() - 0.5) * 300,
+        vy: (Math.random() - 0.5) * 300,
+        life: 0.5 + Math.random() * 0.5,
+        color: color,
+        size: Math.random() * 4 + 2
+      });
+    }
+  }
+
+  function gameOver() {
+    currentState = GameState.GAMEOVER;
+    // Тряска экрана или эффект удара
+  }
+
+  // --- DRAWING ENGINE (IMPROVED) -------------------------------------------
+  
+  // Хелпер для рисования округлого прямоугольника
+  function drawRoundRect(ctx, x, y, w, h, r, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.fill();
+  }
+
+  // Хелпер для градиента
+  function getGradient(ctx, color1, color2, x, y, h) {
+    const grd = ctx.createLinearGradient(x, y, x, y + h);
+    grd.addColorStop(0, color1);
+    grd.addColorStop(1, color2);
+    return grd;
+  }
+
+  // Рисование персонажа (процедурная анимация)
+  function drawCharacter(ctx, x, y, animFrame, isPlayer = true) {
+    ctx.save();
+    ctx.translate(x + 25, y); // Центр в ногах
+    
+    // Параметры анимации
+    const runCycle = Math.sin(animFrame);
+    const runCycle2 = Math.sin(animFrame + Math.PI); // Вторая нога
+    
+    // Наклон тела (от скорости)
+    const tilt = isPlayer ? (speed / 3000) : 0.2;
+    ctx.rotate(tilt);
+
+    // Цвета
+    const skinColor = "#fcd34d"; // Желтоватый (как эмодзи) или телесный
+    const pantsColor = isPlayer ? "#1e3a8a" : "#111827"; // Синие джинсы / Черные брюки
+    const shirtColor = isPlayer ? "#3b82f6" : "#1f2937"; // Голубая толстовка / Форма
+    const shoesColor = isPlayer ? "#fff" : "#000";
+
+    // --- НОГИ ---
+    function drawLeg(cycle) {
+      ctx.save();
+      // Бедро
+      ctx.rotate(cycle * 0.8); 
+      drawRoundRect(ctx, -6, -45, 12, 45, 6, pantsColor);
+      // Голень (IK-ish movement)
+      ctx.translate(0, -5);
+      let kneeBend = cycle > 0 ? cycle * 1.5 : 0.5; // Сгиб колена
+      if (!isPlayer && !player.isGrounded) kneeBend = 0.5; // В полете ноги чуть согнуты
+      ctx.rotate(kneeBend);
+      drawRoundRect(ctx, -5, 0, 10, 40, 5, pantsColor);
+      // Обувь
+      ctx.fillStyle = shoesColor;
+      ctx.fillRect(-6, 35, 16, 8);
+      ctx.restore();
+    }
+
+    // Дальняя нога
+    ctx.save(); ctx.translate(0, -45); drawLeg(runCycle2); ctx.restore();
+
+    // --- ТЕЛО ---
+    const bob = Math.abs(Math.sin(animFrame * 2)) * 5; // Подпрыгивание при беге
+    ctx.translate(0, -45 - bob); 
+    
+    // Торс
+    drawRoundRect(ctx, -15, -55, 30, 60, 10, shirtColor);
+    // Детали одежды
+    if (isPlayer) {
+      ctx.fillStyle = "rgba(255,255,255,0.2)";
+      ctx.fillRect(-10, -50, 20, 40); // принт
+    } else {
+      // Значок полиции
+      ctx.fillStyle = "#fbbf24";
+      ctx.beginPath(); ctx.arc(5, -40, 4, 0, Math.PI*2); ctx.fill();
+    }
+
+    // --- ГОЛОВА ---
+    ctx.translate(0, -60);
+    // Шея
+    ctx.fillStyle = skinColor;
+    ctx.fillRect(-5, 0, 10, 8);
+    // Голова
+    ctx.beginPath();
+    ctx.arc(0, -15, 16, 0, Math.PI*2);
+    ctx.fillStyle = skinColor;
+    ctx.fill();
+    
+    // Лицо
+    ctx.fillStyle = "#000";
+    // Глаза
+    if (isPlayer) {
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.ellipse(4, -18, 4, 3, 0, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#000";
+      ctx.beginPath(); ctx.arc(5, -18, 1.5, 0, Math.PI*2); ctx.fill();
+    } else {
+      // Злые глаза / очки
+      ctx.fillRect(0, -19, 10, 4);
+    }
+    
+    // Кепка / Шляпа (из инвентаря)
+    if (isPlayer) {
+      if (player.hat === "bandana") {
+        ctx.fillStyle = "#ef4444";
+        ctx.fillRect(-16, -24, 32, 6);
+        ctx.beginPath(); ctx.moveTo(16, -20); ctx.lineTo(24, -10); ctx.lineTo(16, -15); ctx.fill();
+      } else if (player.hat === "cap") {
+         ctx.fillStyle = "#2563eb";
+         ctx.beginPath(); ctx.arc(0, -20, 16, Math.PI, 0); ctx.fill();
+         ctx.fillRect(-16, -20, 32, 5);
+         ctx.fillRect(0, -18, 20, 4); // козырек
+      } else if (player.hat === "crown") {
+         ctx.fillStyle = "#eab308";
+         ctx.beginPath(); 
+         ctx.moveTo(-12, -25); ctx.lineTo(-12, -40); ctx.lineTo(-6, -30); 
+         ctx.lineTo(0, -42); ctx.lineTo(6, -30); ctx.lineTo(12, -40); ctx.lineTo(12, -25); 
+         ctx.fill();
+      }
+    } else {
+      // Фуражка полицейского
+      ctx.fillStyle = "#1e3a8a";
+      ctx.fillRect(-17, -25, 34, 10);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(-17, -20, 36, 4); // козырек
+    }
+
+    ctx.translate(0, 60); // Возвращаемся к плечам
+
+    // --- РУКИ ---
+    function drawArm(cycle, holdingBaton) {
+      ctx.save();
+      ctx.translate(0, -50);
+      ctx.rotate(cycle * 1.2); // Размах рук больше
+      // Плечо
+      drawRoundRect(ctx, -4, 0, 8, 25, 4, shirtColor);
+      ctx.translate(0, 22);
+      ctx.rotate(-0.5); // Локоть согнут
+      // Предплечье
+      drawRoundRect(ctx, -3, 0, 6, 20, 3, skinColor);
+      // Кисть
+      ctx.fillStyle = skinColor;
+      ctx.beginPath(); ctx.arc(0, 22, 5, 0, Math.PI*2); ctx.fill();
+      
+      if (holdingBaton) {
+        ctx.save();
+        ctx.translate(0, 20);
+        ctx.rotate(-1.5);
+        ctx.fillStyle = "#333";
+        ctx.fillRect(-2, -5, 4, 30);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
+    // Дальняя рука (скрыта за телом немного)
+    drawArm(runCycle2, false);
+    // Ближняя нога (рисуем поверх тела)
+    ctx.translate(0, 45 + bob); // Вернули в центр координат ног
+    ctx.save(); ctx.translate(0, -45); drawLeg(runCycle); ctx.restore();
+    // Ближняя рука
+    ctx.translate(0, -45 - bob);
+    drawArm(runCycle, !isPlayer); // Полицейский держит дубинку
+
+    ctx.restore();
+  }
+
+  // Рисование мира
+  function draw() {
+    // 1. Небо (Градиент)
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
+    skyGrad.addColorStop(0, "#1e1b4b"); // Темно-синий космос
+    skyGrad.addColorStop(1, "#4c1d95"); // Фиолетовый горизонт
+    ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, width, height);
 
-    // "картинка" дальнего фона: холмы
-    ctx.fillStyle = "#7cc0ff";
-    for (let i = -1; i < 3; i++) {
-      const baseX = i * width + farOffset * 0.6;
-      ctx.beginPath();
-      ctx.moveTo(baseX, height * 0.7);
-      ctx.quadraticCurveTo(
-        baseX + width * 0.25,
-        height * 0.55,
-        baseX + width * 0.5,
-        height * 0.7
-      );
-      ctx.quadraticCurveTo(
-        baseX + width * 0.75,
-        height * 0.85,
-        baseX + width,
-        height * 0.7
-      );
-      ctx.lineTo(baseX + width, height);
-      ctx.lineTo(baseX, height);
-      ctx.closePath();
-      ctx.fill();
+    // 2. Параллакс (Город)
+    ctx.fillStyle = "#312e81"; // Силуэт города
+    const parallaxOffset = (gameTime * speed * 0.1) % 400; // Медленное движение
+    for (let i = -1; i < width/50 + 1; i++) {
+        let h = 50 + Math.sin(i * 132) * 30 + 50;
+        ctx.fillRect(i * 50 - parallaxOffset, groundY - h, 52, h);
     }
-
-    // город (дома) — средний слой
-    const cityOffset = bgCityOffset % (width * 2);
-    ctx.fillStyle = "#233657";
-    const buildingWidth = 90;
-    for (let i = -3; i < 8; i++) {
-      const baseX = i * buildingWidth + cityOffset;
-      const bHeight = height * (0.15 + (i % 5) * 0.05);
-      ctx.fillRect(baseX, groundY - bHeight - 40, buildingWidth - 20, bHeight);
-      // окна
-      ctx.fillStyle = "#f9f6e5";
-      for (let wy = groundY - bHeight - 20; wy < groundY - 60; wy += 26) {
-        ctx.fillRect(baseX + 10, wy, 12, 18);
-        ctx.fillRect(baseX + 40, wy, 12, 18);
-      }
-      ctx.fillStyle = "#233657";
-    }
-
-    // земля
-    ctx.fillStyle = "#343a40";
+    
+    // 3. Дорога
+    const roadGrad = ctx.createLinearGradient(0, groundY, 0, height);
+    roadGrad.addColorStop(0, "#374151");
+    roadGrad.addColorStop(1, "#111827");
+    ctx.fillStyle = roadGrad;
     ctx.fillRect(0, groundY, width, height - groundY);
-    ctx.fillStyle = "#555";
-    ctx.fillRect(0, groundY, width, 6);
-
-    // линия дороги
-    ctx.strokeStyle = "#999";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([20, 20]);
+    // Разметка
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 4;
+    ctx.setLineDash([40, 60]);
+    ctx.lineDashOffset = -(gameTime * speed); // Движение разметки
     ctx.beginPath();
     ctx.moveTo(0, groundY + 40);
     ctx.lineTo(width, groundY + 40);
     ctx.stroke();
     ctx.setLineDash([]);
+
+    // 4. Игровые объекты
+    ctx.shadowColor = "rgba(0,0,0,0.5)";
+    ctx.shadowBlur = 10;
+    
+    // Препятствия
+    obstacles.forEach(o => {
+      // Текстура коробки/ящика
+      drawRoundRect(ctx, o.x, o.y - o.h, o.w, o.h, 4, o.color || "#666");
+      // Детали (полоски на ящике)
+      ctx.fillStyle = "rgba(0,0,0,0.2)";
+      ctx.fillRect(o.x + 5, o.y - o.h + 5, o.w - 10, o.h - 10);
+      ctx.fillStyle = "rgba(255,255,255,0.1)";
+      ctx.fillRect(o.x, o.y - o.h, 5, o.h); // блик
+    });
+
+    ctx.shadowBlur = 0;
+
+    // Монеты
+    coins.forEach(c => {
+      const rot = Math.abs(Math.cos(gameTime * 5)); // Вращение монеты (блик)
+      ctx.fillStyle = "#fbbf24";
+      ctx.beginPath(); 
+      ctx.ellipse(c.x, c.y, c.r * rot, c.r, 0, 0, Math.PI*2); 
+      ctx.fill();
+      ctx.fillStyle = "#f59e0b";
+      ctx.beginPath(); 
+      ctx.ellipse(c.x, c.y, c.r * rot * 0.6, c.r * 0.6, 0, 0, Math.PI*2); 
+      ctx.fill();
+    });
+
+    // Частицы
+    particles.forEach(p => {
+      ctx.globalAlpha = p.life;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1.0;
+    });
+
+    // 5. Персонажи
+    drawCharacter(ctx, police.x, police.y, police.runAnimFrame, false);
+    drawCharacter(ctx, player.x, player.y, player.runAnimFrame, true);
+
+    // 6. UI
+    drawUI();
   }
 
-  // --- DRAW: PLAYER & POLICE ----------------------------------------------
-  function drawPlayer() {
-    const px = player.x();
-    const py = player.y;
-    const runPhase = Math.sin(menuTime * 8 + score * 0.03);
-    const legSwing = runPhase * 16;
-    const armSwing = -runPhase * 18;
-    const tilt = player.jumping ? -0.25 : (player.falling ? 0.6 : 0.0);
-
-    ctx.save();
-    ctx.translate(px, py - PLAYER_HEIGHT * 0.6);
-    ctx.rotate(tilt);
-
-    // НОГИ
-    ctx.fillStyle = "#1e3a8a";
-    drawLeg(-8, 32, legSwing);
-    drawLeg(10, 32, -legSwing);
-
-    // ТОРС
-    ctx.fillStyle = "#2563eb";
-    ctx.beginPath();
-    ctx.roundRect(-14, -4, 28, 44, 10);
-    ctx.fill();
-
-    // РУКИ
-    ctx.fillStyle = "#2563eb";
-    drawArm(-18, -2, armSwing);
-    drawArm(18, -2, -armSwing);
-
-    // ШЕЯ
-    ctx.fillStyle = "#8d5524";
-    ctx.fillRect(-4, -20, 8, 8);
-
-    // ГОЛОВА
-    ctx.beginPath();
-    ctx.arc(0, -32, 14, 0, Math.PI * 2);
-    ctx.fill();
-
-    // ЛИЦО
+  function drawUI() {
     ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(-5, -34, 2, 0, Math.PI * 2);
-    ctx.arc(5, -34, 2, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#000";
-    ctx.beginPath();
-    ctx.arc(-5, -34, 1, 0, Math.PI * 2);
-    ctx.arc(5, -34, 1, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillRect(-2, -30, 4, 2); // нос
-
-    // рот
-    ctx.strokeStyle = "#2c1810";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(0, -26, 5, 0, Math.PI);
-    ctx.stroke();
-
-    // борода
-    ctx.fillStyle = "#2c1810";
-    ctx.beginPath();
-    ctx.arc(0, -27, 7, 0, Math.PI);
-    ctx.fill();
-
-    // золотая цепь
-    ctx.strokeStyle = "#ffd700";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, 10, 12, Math.PI * 0.1, Math.PI * 0.9);
-    ctx.stroke();
-
-    // ЭКИПИРОВКА НА ГОЛОВЕ
-    drawHat(equippedHat);
-
-    ctx.restore();
-  }
-
-  function drawLeg(offsetX, offsetY, swing) {
-    ctx.save();
-    ctx.translate(offsetX, offsetY);
-    ctx.rotate((swing * Math.PI) / 180);
-    ctx.fillRect(-4, 0, 8, 30);
-    ctx.fillRect(-6, 26, 12, 6); // стопа
-    ctx.restore();
-  }
-
-  function drawArm(offsetX, offsetY, swing) {
-    ctx.save();
-    ctx.translate(offsetX, offsetY);
-    ctx.rotate((swing * Math.PI) / 180);
-    // плечо
-    ctx.fillRect(-3, 0, 6, 18);
-    // предплечье
-    ctx.save();
-    ctx.translate(0, 18);
-    ctx.rotate((swing * 0.3 * Math.PI) / 180);
-    ctx.fillRect(-3, 0, 6, 16);
-    ctx.restore();
-    ctx.restore();
-  }
-
-  function drawHat(hatId) {
-    if (hatId === HAT_NONE) return;
-
-    if (hatId === HAT_BANDANA) {
-      ctx.fillStyle = "#dc2626";
-      ctx.beginPath();
-      ctx.moveTo(-14, -42);
-      ctx.lineTo(14, -42);
-      ctx.lineTo(12, -36);
-      ctx.lineTo(-12, -36);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(10, -40);
-      ctx.lineTo(16, -38);
-      ctx.lineTo(12, -34);
-      ctx.closePath();
-      ctx.fill();
-    } else if (hatId === HAT_RED_CAP) {
-      ctx.fillStyle = "#ef4444";
-      ctx.beginPath();
-      ctx.arc(0, -40, 15, Math.PI, 0);
-      ctx.fill();
-      ctx.fillRect(-16, -40, 32, 5);
-      ctx.fillRect(-4, -38, 14, 3); // козырёк
-    } else if (hatId === HAT_BLUE_CAP) {
-      ctx.fillStyle = "#1d4ed8";
-      ctx.beginPath();
-      ctx.arc(0, -40, 15, Math.PI, 0);
-      ctx.fill();
-      ctx.fillRect(-16, -40, 32, 5);
-      ctx.fillStyle = "#1e40af";
-      ctx.fillRect(-6, -38, 16, 3); // козырёк
+    ctx.font = "bold 24px 'Segoe UI', sans-serif";
+    
+    if (currentState === GameState.GAME) {
+      ctx.fillText(`Score: ${Math.floor(displayScore)}`, 20, 40);
+      ctx.fillText(`Coins: ${coinsCount}`, 20, 70);
+      ctx.fillText(`Level: ${level}`, 20, 100);
+      
+      // Speed bar (визуализация скорости)
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillRect(width - 120, 20, 100, 10);
+      ctx.fillStyle = "#0ea5e9";
+      let barFill = Math.min(100, (speed - BASE_SPEED) / 5);
+      ctx.fillRect(width - 120, 20, barFill, 10);
+      ctx.fillStyle = "#fff";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("SPEED", width - 120, 15);
     }
-  }
+    
+    else if (currentState === GameState.MENU) {
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(0,0,width,height);
+      
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 40px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("RUNNER RAP", width/2, height/2 - 100);
+      
+      // Кнопка Play
+      drawRoundRect(ctx, width/2 - 100, height/2, 200, 60, 30, "#10b981");
+      ctx.fillStyle = "white";
+      ctx.font = "bold 24px sans-serif";
+      ctx.fillText("PLAY", width/2, height/2 + 38);
+      
+      // Кнопка Shop
+      drawRoundRect(ctx, width/2 - 100, height/2 + 80, 200, 60, 30, "#3b82f6");
+      ctx.fillStyle = "white";
+      ctx.fillText("SHOP", width/2, height/2 + 118);
 
-  function drawPolice() {
-    const px = police.x();
-    const py = police.y;
-    const runPhase = Math.sin(menuTime * 8 + score * 0.035 + 1.4);
-    const legSwing = runPhase * 14;
-    const armSwing = -runPhase * 16;
+      ctx.font = "16px sans-serif";
+      ctx.fillStyle = "#aaa";
+      ctx.fillText("Tap screen to enable music", width/2, height - 30);
+    }
 
-    ctx.save();
-    ctx.translate(px, py - POLICE_HEIGHT * 0.6);
+    else if (currentState === GameState.GAMEOVER) {
+      ctx.fillStyle = "rgba(50,0,0,0.8)";
+      ctx.fillRect(0,0,width,height);
+      
+      ctx.fillStyle = "#fff";
+      ctx.textAlign = "center";
+      ctx.font = "bold 50px sans-serif";
+      ctx.fillText("BUSTED!", width/2, height/2 - 50);
+      
+      ctx.font = "30px sans-serif";
+      ctx.fillText(`Score: ${Math.floor(score)}`, width/2, height/2 + 20);
+      
+      ctx.font = "20px sans-serif";
+      ctx.fillStyle = "#ccc";
+      ctx.fillText("Press Jump or Enter to Menu", width/2, height/2 + 80);
+    }
 
-    // ноги
-    ctx.fillStyle = "#1f2937";
-    drawLeg(-7, 30, legSwing);
-    drawLeg(9, 30, -legSwing);
+    else if (currentState === GameState.SHOP) {
+      ctx.fillStyle = "#1e293b";
+      ctx.fillRect(0,0,width,height);
+      
+      // Back
+      drawRoundRect(ctx, 20, 20, 100, 50, 10, "#475569");
+      ctx.fillStyle = "white";
+      ctx.textAlign = "left";
+      ctx.font = "20px sans-serif";
+      ctx.fillText("← Back", 35, 52);
+      
+      ctx.textAlign = "right";
+      ctx.fillText(`Coins: ${coinsCount}`, width - 30, 52);
 
-    // тело
-    ctx.fillStyle = "#0f172a";
-    ctx.beginPath();
-    ctx.roundRect(-13, -2, 26, 42, 8);
-    ctx.fill();
+      ctx.textAlign = "center";
+      ctx.font = "bold 30px sans-serif";
+      ctx.fillText("Black Market", width/2, 60);
 
-    // значок
-    ctx.fillStyle = "#fbbf24";
-    ctx.beginPath();
-    ctx.arc(7, 6, 4, 0, Math.PI * 2);
-    ctx.fill();
-
-    // руки
-    ctx.fillStyle = "#0f172a";
-    drawArm(-18, 0, armSwing);
-    drawArm(18, 0, -armSwing);
-
-    // дубинка в правой руке
-    ctx.save();
-    ctx.translate(18, 10);
-    ctx.rotate(-0.4);
-    ctx.fillStyle = "#111827";
-    ctx.fillRect(0, 0, 4, 22);
-    ctx.restore();
-
-    // шея
-    ctx.fillStyle = "#f1c27d";
-    ctx.fillRect(-4, -20, 8, 8);
-
-    // голова
-    ctx.beginPath();
-    ctx.arc(0, -32, 13, 0, Math.PI * 2);
-    ctx.fill();
-
-    // лицо (злое)
-    ctx.fillStyle = "#000";
-    ctx.beginPath();
-    ctx.arc(-5, -34, 2, 0, Math.PI * 2);
-    ctx.arc(5, -34, 2, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.strokeStyle = "#000";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(-7, -36);
-    ctx.lineTo(-3, -35);
-    ctx.moveTo(3, -35);
-    ctx.lineTo(7, -36);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(-4, -26);
-    ctx.quadraticCurveTo(0, -30, 4, -26);
-    ctx.stroke();
-
-    // фуражка
-    ctx.fillStyle = "#020617";
-    ctx.fillRect(-15, -46, 30, 6);
-    ctx.fillRect(-9, -50, 18, 5);
-
-    ctx.restore();
-  }
-
-  // --- DRAW: OBSTACLES & COINS --------------------------------------------
-  function drawObstacles() {
-    obstacles.forEach(function (o) {
-      ctx.fillStyle = "#166534";
-      ctx.fillRect(o.x, o.y - o.h, o.w, o.h);
-      ctx.fillStyle = "#22c55e";
-      ctx.fillRect(o.x + 4, o.y - o.h + 8, o.w - 8, 10);
-    });
-  }
-
-  function drawCoins() {
-    coins.forEach(function (c) {
-      const grad = ctx.createRadialGradient(
-        c.x - 3,
-        c.y - 3,
-        2,
-        c.x,
-        c.y,
-        c.r
-      );
-      grad.addColorStop(0, "#fff7c2");
-      grad.addColorStop(1, "#facc15");
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.strokeStyle = "#eab308";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, c.r * 0.65, 0, Math.PI * 2);
-      ctx.stroke();
-    });
-  }
-
-  // --- DRAW: UI ------------------------------------------------------------
-  function drawHUD() {
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(0, 0, width, 52);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "16px system-ui, sans-serif";
-    ctx.textBaseline = "middle";
-
-    ctx.fillText("Score: " + score, 16, 18);
-    ctx.fillText("Level: " + level, 16, 36);
-
-    const coinsText = "Coins: " + gameCoins;
-    const coinsWidth = ctx.measureText(coinsText).width;
-    ctx.fillText(coinsText, width - coinsWidth - 16, 27);
-
-    // pause button
-    const size = 40;
-    const margin = 6;
-    const x = width - size - margin;
-    const y = margin + 4;
-
-    ctx.fillStyle = "rgba(15,23,42,0.85)";
-    ctx.beginPath();
-    ctx.roundRect(x, y, size, size, 10);
-    ctx.fill();
-
-    ctx.fillStyle = "#e5e7eb";
-    ctx.fillRect(x + 12, y + 10, 4, 20);
-    ctx.fillRect(x + 24, y + 10, 4, 20);
-  }
-
-  function drawPauseOverlay() {
-    ctx.fillStyle = "rgba(15,23,42,0.7)";
-    ctx.fillRect(0, 0, width, height);
-
-    const buttonWidth = width * 0.3;
-    const buttonHeight = 60;
-    const centerX = width / 2;
-    const centerY = height / 2;
-
-    ctx.fillStyle = "#111827";
-    ctx.beginPath();
-    ctx.roundRect(
-      centerX - buttonWidth / 2,
-      centerY - buttonHeight / 2,
-      buttonWidth,
-      buttonHeight,
-      16
-    );
-    ctx.fill();
-
-    ctx.fillStyle = "#e5e7eb";
-    ctx.font = "24px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Continue", centerX, centerY);
-  }
-
-  function drawGameOverOverlay() {
-    ctx.fillStyle = "rgba(15,23,42,0.7)";
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 40px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("GAME OVER", width / 2, height * 0.4);
-
-    ctx.font = "20px system-ui, sans-serif";
-    ctx.fillText("Tap or press Enter to return to menu", width / 2, height * 0.55);
-  }
-
-  // --- DRAW: MENU & SHOP ---------------------------------------------------
-  function drawMenu(delta) {
-    drawBackground();
-
-    // танцующий персонаж в меню
-    const centerX = width * 0.25;
-    const baseY = groundY;
-    const bounce = Math.sin(menuTime * 4) * 10;
-
-    ctx.save();
-    ctx.translate(centerX, baseY + bounce);
-    ctx.scale(1.1, 1.1);
-    drawPlayerSilhouette();
-    ctx.restore();
-
-    // логотип / заголовок
-    ctx.fillStyle = "#0f172a";
-    ctx.globalAlpha = 0.75;
-    ctx.fillRect(0, 0, width, height * 0.32);
-    ctx.globalAlpha = 1;
-
-    ctx.fillStyle = "#f9fafb";
-    ctx.font = "bold 32px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("RUNNER RAP", width / 2, height * 0.12);
-
-    ctx.font = "16px system-ui, sans-serif";
-    ctx.fillText("Tap Play to start the run", width / 2, height * 0.19);
-
-    // КНОПКИ
-    const buttonWidth = width * 0.4;
-    const buttonHeight = 60;
-    const centerX2 = width / 2;
-    const startY = height * 0.55;
-
-    // Play
-    ctx.fillStyle = "#16a34a";
-    ctx.beginPath();
-    ctx.roundRect(
-      centerX2 - buttonWidth / 2,
-      startY,
-      buttonWidth,
-      buttonHeight,
-      18
-    );
-    ctx.fill();
-
-    ctx.fillStyle = "#ecfdf5";
-    ctx.font = "22px system-ui, sans-serif";
-    ctx.fillText("▶ Play", centerX2, startY + buttonHeight / 2);
-
-    // Shop
-    ctx.fillStyle = "#1d4ed8";
-    ctx.beginPath();
-    ctx.roundRect(
-      centerX2 - buttonWidth / 2,
-      startY + buttonHeight + 20,
-      buttonWidth,
-      buttonHeight,
-      18
-    );
-    ctx.fill();
-
-    ctx.fillStyle = "#eff6ff";
-    ctx.font = "22px system-ui, sans-serif";
-    ctx.fillText("🛒 Shop", centerX2, startY + buttonHeight + 20 + buttonHeight / 2);
-  }
-
-  function drawPlayerSilhouette() {
-    // упрощённый, но похожий на основного
-    const runPhase = Math.sin(menuTime * 6);
-    const legSwing = runPhase * 18;
-    const armSwing = -runPhase * 20;
-
-    ctx.save();
-    ctx.translate(0, -PLAYER_HEIGHT * 0.6);
-
-    ctx.fillStyle = "#1e3a8a";
-    drawLeg(-8, 32, legSwing);
-    drawLeg(10, 32, -legSwing);
-
-    ctx.fillStyle = "#1d4ed8";
-    ctx.beginPath();
-    ctx.roundRect(-14, -4, 28, 44, 10);
-    ctx.fill();
-
-    ctx.fillStyle = "#1d4ed8";
-    drawArm(-18, -2, armSwing);
-    drawArm(18, -2, -armSwing);
-
-    ctx.fillStyle = "#fcd34d";
-    ctx.strokeStyle = "#facc15";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, 10, 12, Math.PI * 0.1, Math.PI * 0.9);
-    ctx.stroke();
-
-    ctx.fillStyle = "#f59e0b";
-    ctx.fillRect(-4, -20, 8, 8);
-    ctx.beginPath();
-    ctx.arc(0, -32, 14, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-  }
-
-  function drawShop() {
-    drawBackground();
-
-    ctx.fillStyle = "rgba(15,23,42,0.9)";
-    ctx.fillRect(0, 0, width, height);
-
-    const margin = 40;
-    const itemHeight = 80;
-    const listTop = height * 0.3;
-    const listLeft = margin;
-    const listWidth = width - margin * 2;
-
-    // заголовок
-    ctx.fillStyle = "#e5e7eb";
-    ctx.font = "bold 28px system-ui, sans-serif";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText("Shop", margin, margin);
-
-    // монеты игрока
-    ctx.font = "18px system-ui, sans-serif";
-    ctx.fillText("Your coins: " + gameCoins, margin, margin + 32);
-
-    // кнопка Back
-    const backWidth = 120;
-    const backHeight = 44;
-    ctx.fillStyle = "#1d4ed8";
-    ctx.beginPath();
-    ctx.roundRect(margin, margin + 60, backWidth, backHeight, 12);
-    ctx.fill();
-    ctx.fillStyle = "#eff6ff";
-    ctx.font = "18px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Back", margin + backWidth / 2, margin + 60 + backHeight / 2);
-
-    // список предметов
-    ctx.textAlign = "left";
-    inventory.forEach(function (item, index) {
-      const y = listTop + index * (itemHeight + 12);
-
-      ctx.fillStyle = "rgba(31,41,55,0.9)";
-      ctx.beginPath();
-      ctx.roundRect(listLeft, y, listWidth, itemHeight, 16);
-      ctx.fill();
-
-      // иконка предмета
-      ctx.save();
-      ctx.translate(listLeft + 40, y + itemHeight / 2);
-      ctx.scale(1.1, 1.1);
-      if (item.id === HAT_BANDANA) {
-        ctx.fillStyle = "#dc2626";
-        ctx.beginPath();
-        ctx.arc(0, 0, 14, Math.PI, 0);
-        ctx.fill();
-      } else if (item.id === HAT_RED_CAP) {
-        ctx.fillStyle = "#ef4444";
-        ctx.beginPath();
-        ctx.arc(0, 0, 14, Math.PI, 0);
-        ctx.fill();
-      } else if (item.id === HAT_BLUE_CAP) {
-        ctx.fillStyle = "#1d4ed8";
-        ctx.beginPath();
-        ctx.arc(0, 0, 14, Math.PI, 0);
-        ctx.fill();
-      }
-      ctx.restore();
-
-      // текст
-      ctx.fillStyle = "#e5e7eb";
-      ctx.font = "20px system-ui, sans-serif";
-      ctx.fillText(item.name, listLeft + 80, y + 20);
-
-      ctx.font = "16px system-ui, sans-serif";
-      ctx.fillStyle = "#9ca3af";
-      ctx.fillText("Price: " + item.price + " coins", listLeft + 80, y + 46);
-
-      // BUY / EQUIP
-      const buyWidth = 90;
-      const buyHeight = 40;
-      const buyX = listLeft + listWidth - buyWidth - 16;
-      const buyY = y + itemHeight / 2 - buyHeight / 2;
-
-      if (!item.owned) {
-        ctx.fillStyle = gameCoins >= item.price ? "#16a34a" : "#4b5563";
-        ctx.beginPath();
-        ctx.roundRect(buyX, buyY, buyWidth, buyHeight, 10);
-        ctx.fill();
-        ctx.fillStyle = "#e5e7eb";
+      // Items
+      shopItems.forEach((item, i) => {
+        const y = 150 + i * 80;
+        const xStart = width/2 - 150;
+        
+        ctx.fillStyle = "#334155";
+        if (item.id === player.hat) ctx.fillStyle = "#064e3b"; // Выбрано
+        
+        drawRoundRect(ctx, 20, y, width - 40, 70, 10, ctx.fillStyle);
+        
+        ctx.textAlign = "left";
+        ctx.fillStyle = "white";
+        ctx.font = "24px sans-serif";
+        ctx.fillText(item.name, 40, y + 42);
+        
+        // Кнопка купить/выбрать
+        const btnColor = item.owned ? (item.id === player.hat ? "#059669" : "#64748b") : "#d97706";
+        const btnText = item.owned ? (item.id === player.hat ? "WEARING" : "WEAR") : `${item.price} $`;
+        
+        drawRoundRect(ctx, width - 140, y + 15, 120, 40, 8, btnColor);
+        ctx.fillStyle = "white";
         ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.font = "18px system-ui, sans-serif";
-        ctx.fillText("Buy", buyX + buyWidth / 2, buyY + buyHeight / 2);
-      } else {
-        const equipped = equippedHat === item.id;
-        ctx.fillStyle = equipped ? "#22c55e" : "#64748b";
-        ctx.beginPath();
-        ctx.roundRect(buyX, buyY, buyWidth, buyHeight, 10);
-        ctx.fill();
-        ctx.fillStyle = "#e5e7eb";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.font = "16px system-ui, sans-serif";
-        ctx.fillText(equipped ? "Equipped" : "Wear", buyX + buyWidth / 2, buyY + buyHeight / 2);
-      }
-    });
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText(btnText, width - 80, y + 40);
+      });
+    }
+
+    ctx.textAlign = "start"; // Reset
   }
 
-  // --- MAIN LOOP -----------------------------------------------------------
+  // --- LOOP ----------------------------------------------------------------
   let lastTime = 0;
-
   function loop(timestamp) {
-    if (!lastTime) lastTime = timestamp;
-    const delta = Math.min(0.05, (timestamp - lastTime) / 1000); // clamp
+    const dt = Math.min((timestamp - lastTime) / 1000, 0.1); // Limit dt
     lastTime = timestamp;
-    menuTime += delta;
 
-    ctx.clearRect(0, 0, width, height);
-
-    if (gameState === GameState.MENU) {
-      drawMenu(delta);
-    } else if (gameState === GameState.SHOP) {
-      drawShop();
-    } else if (gameState === GameState.GAME || gameState === GameState.PAUSE || gameState === GameState.GAME_OVER) {
-      if (gameState === GameState.GAME) {
-        updateGame(delta);
-      }
-      drawBackground();
-      drawObstacles();
-      drawCoins();
-      drawPolice();
-      drawPlayer();
-      drawHUD();
-
-      if (gameState === GameState.PAUSE) {
-        drawPauseOverlay();
-      } else if (gameState === GameState.GAME_OVER) {
-        drawGameOverOverlay();
-      }
-    }
-
+    update(dt);
+    draw();
+    
     requestAnimationFrame(loop);
   }
-
-  resetGame();
-  scheduleNextObstacle();
+  
   requestAnimationFrame(loop);
+
 })();
 </script>
 </body>
