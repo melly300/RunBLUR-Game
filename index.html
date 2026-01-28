@@ -56,6 +56,21 @@
   window.addEventListener("resize", resizeCanvas);
   resizeCanvas();
 
+  // --- AUDIO SETUP ---------------------------------------------------------
+  // Создаем аудио объект. Файл должен лежать рядом с index.html
+  const bgMusic = new Audio("Untitled Project 2.mp3");
+  bgMusic.loop = true;   // зацикливаем
+  bgMusic.volume = 0.6;  // громкость 60%
+
+  // Функция для безопасного запуска музыки (браузеры требуют действие пользователя)
+  function tryPlayMusic() {
+    if (bgMusic.paused) {
+      bgMusic.play().catch((err) => {
+        console.warn("Autoplay blocked until user interaction:", err);
+      });
+    }
+  }
+
   // --- GAME STATE ----------------------------------------------------------
   const GameState = {
     MENU: "menu",
@@ -166,6 +181,9 @@
   }
 
   function handlePointerDown(evt) {
+    // Пытаемся запустить музыку при любом клике
+    tryPlayMusic();
+
     const pos = getPointerPos(evt);
     pointerX = pos.x;
     pointerY = pos.y;
@@ -195,6 +213,9 @@
   });
 
   document.addEventListener("keydown", function (evt) {
+    // Пытаемся запустить музыку при нажатии клавиш
+    tryPlayMusic();
+
     if (evt.code === "Space" || evt.code === "ArrowUp") {
       if (gameState === GameState.GAME) {
         playerJump();
